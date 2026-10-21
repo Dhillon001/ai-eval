@@ -1,5 +1,7 @@
 # AI Eval
 
+[![CI](https://github.com/Dhillon001/ai-eval/actions/workflows/ci.yml/badge.svg)](https://github.com/Dhillon001/ai-eval/actions/workflows/ci.yml)
+
 Offline evaluation runner for LLM and AI systems: datasets, adapters, scorers, run history, and regression reports.
 
 ## Quick start
