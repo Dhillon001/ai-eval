@@ -1,60 +1,70 @@
 from __future__ import annotations
 
 import json
-import os
 import re
+from typing import Any
 
+from ai_eval.llm import LLMError, chat, make_client
 from ai_eval.models import EvalCase, RunResult, ScoreResult
 from ai_eval.scorers.base import Scorer
 
 DEFAULT_RUBRIC = """Rate whether the assistant response satisfies the criteria.
 Return JSON only: {"pass": true|false, "score": 0.0-1.0, "reason": "..."}"""
 
+FAITHFULNESS_RUBRIC = """You are checking a retrieval-augmented answer for faithfulness.
+A response is faithful only if every factual claim it makes is supported by the provided context.
+Unsupported or contradicted claims make it unfaithful, even if they are true in general.
+If the context does not contain the answer, the faithful response says so instead of guessing.
+Return JSON only: {"pass": true|false, "score": 0.0-1.0, "reason": "...", "unsupported_claims": ["..."]}"""
+
+DEFAULT_MODELS = {"openai": "gpt-4o-mini", "anthropic": "claude-haiku-5-5"}
+
 
 class LLMJudgeScorer(Scorer):
+    """LLM-as-judge. `mode: faithfulness` grades the answer against `case.context` (RAG)."""
+
     name = "llm_judge"
 
     def __init__(
         self,
-        model: str = "gpt-4o-mini",
+        provider: str = "openai",
+        model: str | None = None,
         rubric: str | None = None,
         pass_threshold: float = 0.7,
+        mode: str = "criteria",
+        client: Any = None,
     ):
-        self.model = model
-        self.rubric = rubric or DEFAULT_RUBRIC
+        if mode not in ("criteria", "faithfulness"):
+            raise ValueError("llm_judge mode must be 'criteria' or 'faithfulness'")
+        self.provider = provider
+        self.model = model or DEFAULT_MODELS.get(provider, "gpt-4o-mini")
+        self.mode = mode
+        self.rubric = rubric or (FAITHFULNESS_RUBRIC if mode == "faithfulness" else DEFAULT_RUBRIC)
         self.pass_threshold = pass_threshold
+        self._client = client
+        if mode == "faithfulness":
+            self.name = "faithfulness"
 
-    def score(self, case: EvalCase, run: RunResult) -> ScoreResult:
-        if run.error:
-            return ScoreResult(
-                scorer=self.name,
-                passed=False,
-                score=0.0,
-                details={"error": run.error},
-            )
+    def _fail(self, msg: str) -> ScoreResult:
+        return ScoreResult(scorer=self.name, passed=False, score=0.0, details={"error": msg})
 
-        try:
-            from openai import OpenAI
-        except ImportError:
-            return ScoreResult(
-                scorer=self.name,
-                passed=False,
-                score=0.0,
-                details={"error": "openai package not installed"},
-            )
+    def _build_prompt(self, case: EvalCase, run: RunResult) -> str | None:
+        if self.mode == "faithfulness":
+            if not case.context:
+                return None
+            return f"""{self.rubric}
 
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            return ScoreResult(
-                scorer=self.name,
-                passed=False,
-                score=0.0,
-                details={"error": "OPENAI_API_KEY is not set"},
-            )
+Context:
+{case.context}
 
-        client = OpenAI(api_key=api_key)
+User question:
+{case.input}
+
+Assistant response:
+{run.output}
+"""
         criteria = case.metadata.get("judge_criteria") or case.expected or "Response is helpful and accurate."
-        prompt = f"""{self.rubric}
+        return f"""{self.rubric}
 
 User input:
 {case.input}
@@ -65,47 +75,63 @@ Assistant response:
 Criteria:
 {criteria}
 """
+
+    def score(self, case: EvalCase, run: RunResult) -> ScoreResult:
+        if run.error:
+            return self._fail(run.error)
+
+        prompt = self._build_prompt(case, run)
+        if prompt is None:
+            return ScoreResult(scorer=self.name, passed=True, score=1.0, details={"skipped": "no context"})
+
         try:
-            resp = client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "You are an evaluation judge. Output JSON only."},
-                    {"role": "user", "content": prompt},
-                ],
+            if self._client is None:
+                self._client = make_client(self.provider)
+            resp = chat(
+                self._client,
+                self.provider,
+                self.model,
+                "You are an evaluation judge. Output JSON only.",
+                prompt,
                 temperature=0.0,
             )
-            raw = resp.choices[0].message.content or "{}"
+        except LLMError as e:
+            return self._fail(str(e))
         except Exception as e:
-            return ScoreResult(
-                scorer=self.name,
-                passed=False,
-                score=0.0,
-                details={"error": str(e)},
-            )
+            return self._fail(f"{type(e).__name__}: {e}")
 
+        raw = resp.text or "{}"
         parsed = self._parse_json(raw)
-        score = float(parsed.get("score", 0.0))
-        passed = bool(parsed.get("pass", score >= self.pass_threshold))
-        if "pass" not in parsed:
+        try:
+            score = max(0.0, min(1.0, float(parsed.get("score", 0.0))))
+        except (TypeError, ValueError):
+            score = 0.0
+        if "pass" in parsed:
+            passed = bool(parsed["pass"])
+        else:
             passed = score >= self.pass_threshold
 
         return ScoreResult(
             scorer=self.name,
             passed=passed,
-            score=max(0.0, min(1.0, score)),
-            details={"raw": raw, "parsed": parsed},
+            score=score,
+            details={"raw": raw, "parsed": parsed, "judge": f"{self.provider}:{self.model}"},
         )
 
     @staticmethod
     def _parse_json(text: str) -> dict:
         text = text.strip()
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", text, re.DOTALL)
-            if match:
-                try:
-                    return json.loads(match.group())
-                except json.JSONDecodeError:
-                    pass
+        fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+        candidates = [fenced.group(1)] if fenced else []
+        candidates.append(text)
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if match:
+            candidates.append(match.group())
+        for c in candidates:
+            try:
+                data = json.loads(c)
+                if isinstance(data, dict):
+                    return data
+            except json.JSONDecodeError:
+                continue
         return {"pass": False, "score": 0.0, "reason": "failed to parse judge output"}

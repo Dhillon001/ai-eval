@@ -17,4 +17,6 @@ def build_scorer(spec: dict[str, Any]) -> Scorer:
         return ChecklistScorer(**opts)
     if kind in ("llm_judge", "judge"):
         return LLMJudgeScorer(**opts)
+    if kind == "faithfulness":
+        return LLMJudgeScorer(mode="faithfulness", **opts)
     raise ValueError(f"Unknown scorer type: {kind}")

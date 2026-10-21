@@ -4,11 +4,15 @@ import hashlib
 import json
 import subprocess
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Callable
 
 from ai_eval.adapters import build_adapter
 from ai_eval.dataset import load_cases, load_suite
-from ai_eval.models import CaseOutcome, EvalRunSummary, utc_now
+from ai_eval.adapters.base import SystemAdapter
+from ai_eval.models import CaseOutcome, EvalCase, EvalRunSummary, RunResult, ScoreResult, utc_now
+from ai_eval.scorers.base import Scorer
 from ai_eval.scorers import build_scorer
 from ai_eval.store import RunStore
 
@@ -32,12 +36,57 @@ def git_sha(cwd: Path | None = None) -> str | None:
         return None
 
 
+def evaluate_case(case: EvalCase, adapter: SystemAdapter, scorers: list[Scorer]) -> CaseOutcome:
+    """Run one case end to end. Never raises: adapter/scorer crashes become recorded failures."""
+    try:
+        run = adapter.run(case)
+    except Exception as e:
+        run = RunResult(case_id=case.id, output="", error=f"adapter crashed: {type(e).__name__}: {e}")
+    scores: list[ScoreResult] = []
+    for scorer in scorers:
+        try:
+            scores.append(scorer.score(case, run))
+        except Exception as e:
+            scores.append(
+                ScoreResult(
+                    scorer=getattr(scorer, "name", type(scorer).__name__),
+                    passed=False,
+                    score=0.0,
+                    details={"error": f"scorer crashed: {type(e).__name__}: {e}"},
+                )
+            )
+    return CaseOutcome(case_id=case.id, run=run, scores=scores)
+
+
+def _percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    idx = min(len(ordered) - 1, max(0, round(pct / 100 * (len(ordered) - 1))))
+    return ordered[idx]
+
+
+def run_stats(outcomes: list[CaseOutcome]) -> dict:
+    latencies = [o.run.latency_ms for o in outcomes]
+    prompt = [o.run.prompt_tokens for o in outcomes if o.run.prompt_tokens is not None]
+    completion = [o.run.completion_tokens for o in outcomes if o.run.completion_tokens is not None]
+    return {
+        "errors": sum(1 for o in outcomes if o.run.error),
+        "latency_ms_p50": round(_percentile(latencies, 50), 2),
+        "latency_ms_p95": round(_percentile(latencies, 95), 2),
+        "prompt_tokens": sum(prompt) if prompt else None,
+        "completion_tokens": sum(completion) if completion else None,
+    }
+
+
 def run_suite(
     suite_path: Path,
     project_root: Path,
     adapter_name: str | None = None,
     adapter_options: dict | None = None,
     store: RunStore | None = None,
+    concurrency: int = 1,
+    on_case_done: Callable[[CaseOutcome], None] | None = None,
 ) -> tuple[str, EvalRunSummary, list[CaseOutcome]]:
     suite = load_suite(suite_path, project_root=project_root)
     cases = load_cases(Path(suite.dataset))
@@ -49,12 +98,18 @@ def run_suite(
     adapter = build_adapter(name, adapter_cfg)
 
     scorers = [build_scorer(s) for s in suite.scorers]
-    outcomes: list[CaseOutcome] = []
 
-    for case in cases:
-        run = adapter.run(case)
-        scores = [scorer.score(case, run) for scorer in scorers]
-        outcomes.append(CaseOutcome(case_id=case.id, run=run, scores=scores))
+    def _one(case: EvalCase) -> CaseOutcome:
+        outcome = evaluate_case(case, adapter, scorers)
+        if on_case_done:
+            on_case_done(outcome)
+        return outcome
+
+    if concurrency <= 1:
+        outcomes = [_one(c) for c in cases]
+    else:
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            outcomes = list(pool.map(_one, cases))  # map preserves dataset order
 
     passed = sum(1 for o in outcomes if o.passed)
     total = len(outcomes)
@@ -79,7 +134,7 @@ def run_suite(
         passed=passed,
         pass_rate=passed / total if total else 0.0,
         mean_score=mean_score,
-        metadata={"suite_path": str(suite_path)},
+        metadata={"suite_path": str(suite_path), "concurrency": concurrency, **run_stats(outcomes)},
     )
 
     if store is None:

@@ -8,36 +8,84 @@ from ai_eval.models import CaseOutcome, EvalCase, EvalRunSummary
 from ai_eval.store import RunStore
 
 
+def _case_score(o: CaseOutcome) -> float:
+    if not o.scores:
+        return 1.0 if o.run.error is None else 0.0
+    return sum(s.score for s in o.scores) / len(o.scores)
+
+
+def _scorer_means(outcomes: list[CaseOutcome]) -> dict[str, float]:
+    buckets: dict[str, list[float]] = {}
+    for o in outcomes:
+        for s in o.scores:
+            buckets.setdefault(s.scorer, []).append(s.score)
+    return {k: sum(v) / len(v) for k, v in buckets.items()}
+
+
+def _tag_pass_rates(outcomes: list[CaseOutcome], cases: dict[str, EvalCase]) -> dict[str, float]:
+    buckets: dict[str, list[bool]] = {}
+    for o in outcomes:
+        case = cases.get(o.case_id)
+        tags = (case.metadata.get("tags") if case else None) or ["untagged"]
+        for t in tags:
+            buckets.setdefault(str(t), []).append(o.passed)
+    return {t: sum(v) / len(v) for t, v in sorted(buckets.items())}
+
+
 def compare_runs(
     baseline: EvalRunSummary,
     candidate: EvalRunSummary,
     baseline_outcomes: list[CaseOutcome],
     candidate_outcomes: list[CaseOutcome],
+    baseline_cases: dict[str, EvalCase] | None = None,
+    candidate_cases: dict[str, EvalCase] | None = None,
+    score_drop_threshold: float = 0.1,
 ) -> dict:
+    """Diff two runs. A regression is a case that flipped pass->fail, or (still passing/failing)
+    whose mean score dropped by more than `score_drop_threshold`."""
     b_map = {o.case_id: o for o in baseline_outcomes}
     c_map = {o.case_id: o for o in candidate_outcomes}
-    ids = sorted(set(b_map) | set(c_map))
 
     regressions: list[str] = []
     improvements: list[str] = []
-    for cid in ids:
-        b = b_map.get(cid)
-        c = c_map.get(cid)
-        if b and c:
-            if b.passed and not c.passed:
-                regressions.append(cid)
-            elif not b.passed and c.passed:
-                improvements.append(cid)
+    score_drops: list[dict] = []
+    for cid in sorted(set(b_map) & set(c_map)):
+        b, c = b_map[cid], c_map[cid]
+        if b.passed and not c.passed:
+            regressions.append(cid)
+        elif not b.passed and c.passed:
+            improvements.append(cid)
+        else:
+            delta = _case_score(c) - _case_score(b)
+            if delta < -score_drop_threshold:
+                score_drops.append({"case_id": cid, "delta": round(delta, 4)})
 
-    return {
+    b_means, c_means = _scorer_means(baseline_outcomes), _scorer_means(candidate_outcomes)
+    scorer_deltas = {
+        k: round(c_means.get(k, 0.0) - b_means.get(k, 0.0), 4) for k in sorted(set(b_means) | set(c_means))
+    }
+
+    result = {
         "baseline_run_id": baseline.run_id,
         "candidate_run_id": candidate.run_id,
         "baseline_pass_rate": baseline.pass_rate,
         "candidate_pass_rate": candidate.pass_rate,
         "pass_rate_delta": candidate.pass_rate - baseline.pass_rate,
+        "mean_score_delta": candidate.mean_score - baseline.mean_score,
         "regressions": regressions,
+        "score_drops": score_drops,
         "improvements": improvements,
+        "missing_in_candidate": sorted(set(b_map) - set(c_map)),
+        "new_in_candidate": sorted(set(c_map) - set(b_map)),
+        "scorer_mean_deltas": scorer_deltas,
     }
+    if baseline_cases is not None and candidate_cases is not None:
+        b_tags = _tag_pass_rates(baseline_outcomes, baseline_cases)
+        c_tags = _tag_pass_rates(candidate_outcomes, candidate_cases)
+        result["tag_pass_rate_deltas"] = {
+            t: round(c_tags.get(t, 0.0) - b_tags.get(t, 0.0), 4) for t in sorted(set(b_tags) | set(c_tags))
+        }
+    return result
 
 
 def write_html_report(
@@ -116,5 +164,7 @@ def print_compare_json(project_root: Path, baseline_id: str, candidate_id: str) 
         c,
         store.get_outcomes(baseline_id),
         store.get_outcomes(candidate_id),
+        store.get_cases(baseline_id),
+        store.get_cases(candidate_id),
     )
     return json.dumps(result, indent=2)

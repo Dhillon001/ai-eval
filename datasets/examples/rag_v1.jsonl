@@ -1,0 +1,3 @@
+{"id": "rag-refund-window", "input": "How long do I have to return an item?", "context": "Return policy: Items may be returned within 30 days of delivery. Final-sale items cannot be returned.", "checks": ["30 days"], "metadata": {"tags": ["rag", "policy"]}}
+{"id": "rag-final-sale", "input": "Can I return a final-sale jacket?", "context": "Return policy: Items may be returned within 30 days of delivery. Final-sale items cannot be returned.", "checks": ["cannot"], "metadata": {"tags": ["rag", "policy"]}}
+{"id": "rag-not-in-context", "input": "Do you ship to Canada?", "context": "Return policy: Items may be returned within 30 days of delivery.", "metadata": {"tags": ["rag", "abstain"], "judge_criteria": "Says the context does not cover shipping instead of guessing."}}

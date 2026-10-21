@@ -7,7 +7,7 @@ Offline evaluation runner for LLM and AI systems: datasets, adapters, scorers, r
 ```bash
 cd "/Users/harsharandeepdhillon/Desktop/AI Eval system"
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[openai,dev]"
+pip install -e ".[openai,anthropic,dev]"
 
 # Mock run (no API key) — uses the mock adapter
 ai-eval run --suite configs/example_suite.yaml --adapter mock
@@ -16,8 +16,12 @@ ai-eval run --suite configs/example_suite.yaml --adapter mock
 export OPENAI_API_KEY=sk-...
 ai-eval run --suite configs/example_suite.yaml --adapter openai --model gpt-4o-mini
 
+# Anthropic (Claude), 8 cases in parallel
+export ANTHROPIC_API_KEY=sk-ant-...
+ai-eval run --suite configs/rag_suite.yaml -j 8
+
 ai-eval report --run-id <id>
-ai-eval compare --baseline <id-a> --candidate <id-b>
+ai-eval compare --baseline <id-a> --candidate <id-b> [--fail-on-score-drop]
 ai-eval list-runs
 ```
 
@@ -33,6 +37,21 @@ ai-eval list-runs
 ```json
 {"id": "refund-1", "input": "Can I get a refund?", "expected": "refund", "metadata": {"tags": ["support"]}, "checks": ["refund", "policy"]}
 ```
+
+## Scorers
+
+| type | what it checks |
+|---|---|
+| `exact` | normalized output == `expected` |
+| `checklist` | every string in `checks` appears in the output |
+| `llm_judge` | LLM grades output against `metadata.judge_criteria` / `expected` (`provider: openai\|anthropic`) |
+| `faithfulness` | LLM checks every claim is supported by `context` (RAG); skips cases without context |
+
+## Compare
+
+`compare` reports pass→fail flips (`regressions`), score drops >0.1 on cases that didn't flip,
+improvements, missing/new cases, per-scorer mean deltas and per-tag pass-rate deltas.
+Exits 1 on regressions (and on score drops with `--fail-on-score-drop`) so it can gate CI.
 
 ## Extending
 

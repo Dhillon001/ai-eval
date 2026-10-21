@@ -3,7 +3,7 @@ name = "ai-eval"
 version = "0.1.0"
 description = "Offline evaluation runner for LLM and AI systems"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
   "typer>=0.12",
   "pydantic>=2.0",
@@ -14,6 +14,7 @@ dependencies = [
 
 [project.optional-dependencies]
 openai = ["openai>=1.0"]
+anthropic = ["anthropic>=0.40"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]

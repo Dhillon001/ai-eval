@@ -1,0 +1,11 @@
+name: rag-v1
+description: RAG suite - checklist plus LLM-judged faithfulness to the retrieved context
+dataset: datasets/examples/rag_v1.jsonl
+adapter:
+  type: anthropic          # or openai; override with --adapter / --model
+  model: claude-haiku-5-5
+  system_prompt: "Answer only from the provided context. If the context does not contain the answer, say so."
+scorers:
+  - type: checklist
+  - type: faithfulness
+    provider: anthropic    # judge provider: openai | anthropic
