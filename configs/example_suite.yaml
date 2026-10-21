@@ -1,0 +1,8 @@
+name: example-chat-v1
+description: Starter suite for checklist scoring with mock or OpenAI adapter
+dataset: datasets/examples/chat_v1.jsonl
+adapter:
+  type: mock
+  template: "Support bot: We can help with {input}. Our refund policy allows returns within 30 days."
+scorers:
+  - type: checklist
