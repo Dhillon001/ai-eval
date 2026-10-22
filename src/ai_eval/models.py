@@ -67,5 +67,21 @@ class EvalRunSummary(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+RUN_EXPORT_FORMAT_VERSION = 1
+
+
+class RunExport(BaseModel):
+    """A self-contained run (summary, outcomes, cases) that can be written to JSON and compared
+    on another machine without access to the original runs.db."""
+
+    format_version: int = RUN_EXPORT_FORMAT_VERSION
+    summary: EvalRunSummary
+    outcomes: list[CaseOutcome] = Field(default_factory=list)
+    cases: list[EvalCase] = Field(default_factory=list)
+
+    def cases_by_id(self) -> dict[str, EvalCase]:
+        return {c.id: c for c in self.cases}
+
+
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)

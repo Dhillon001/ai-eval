@@ -4,7 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from ai_eval.models import CaseOutcome, EvalCase, EvalRunSummary
+from ai_eval.models import RUN_EXPORT_FORMAT_VERSION, CaseOutcome, EvalCase, EvalRunSummary, RunExport
 
 
 class RunStore:
@@ -130,6 +130,17 @@ class RunStore:
             ).fetchall()
         return {r["case_id"]: EvalCase.model_validate_json(r["payload_json"]) for r in rows}
 
+    def export_run(self, run_id: str) -> RunExport:
+        summary = self.get_run(run_id)
+        if not summary:
+            raise ValueError(f"Run not found: {run_id}")
+        cases = self.get_cases(run_id)
+        return RunExport(
+            summary=summary,
+            outcomes=self.get_outcomes(run_id),
+            cases=[cases[k] for k in sorted(cases)],
+        )
+
     @staticmethod
     def _row_to_summary(row: sqlite3.Row) -> EvalRunSummary:
         from datetime import datetime
@@ -148,3 +159,26 @@ class RunStore:
             mean_score=row["mean_score"],
             metadata=json.loads(row["metadata_json"]),
         )
+
+
+def save_run_file(export: RunExport, path: Path) -> Path:
+    """Write an exported run as JSON (creating parent directories)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(export.model_dump_json(indent=2), encoding="utf-8")
+    return path
+
+
+def load_run_file(path: Path) -> RunExport:
+    """Read a run previously written by `save_run_file`."""
+    if not path.is_file():
+        raise ValueError(f"Run file not found: {path}")
+    try:
+        export = RunExport.model_validate_json(path.read_text(encoding="utf-8"))
+    except ValueError as e:
+        raise ValueError(f"Invalid run file {path}: {e}") from e
+    if export.format_version > RUN_EXPORT_FORMAT_VERSION:
+        raise ValueError(
+            f"Run file {path} has format_version {export.format_version}; "
+            f"this ai-eval supports up to {RUN_EXPORT_FORMAT_VERSION}"
+        )
+    return export

@@ -9,9 +9,10 @@ from rich.console import Console
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
-from ai_eval.report import generate_report, print_compare_json
+from ai_eval.models import RunExport
+from ai_eval.report import compare_exports, generate_report
 from ai_eval.runner import run_suite
-from ai_eval.store import RunStore
+from ai_eval.store import RunStore, load_run_file, save_run_file
 
 app = typer.Typer(no_args_is_help=True, help="Offline evaluation runner for AI systems")
 console = Console()
@@ -28,6 +29,9 @@ def run(
     model: Optional[str] = typer.Option(None, "--model", help="Model name for the openai/anthropic adapter"),
     concurrency: int = typer.Option(1, "--concurrency", "-j", min=1, help="Cases to run in parallel"),
     min_pass_rate: float = typer.Option(0.0, "--min-pass-rate", help="Exit 1 if pass rate below this"),
+    save_baseline: Optional[Path] = typer.Option(
+        None, "--save-baseline", help="Also export this run (summary, outcomes, cases) as JSON to PATH"
+    ),
 ):
     """Run an eval suite and store results."""
     root = _project_root()
@@ -63,6 +67,10 @@ def run(
         + (f" | tokens in/out: {m['prompt_tokens']}/{m['completion_tokens']}" if m.get("prompt_tokens") else "")
     )
     console.print(f"Report: {report_path}")
+    if save_baseline:
+        out = save_baseline if save_baseline.is_absolute() else root / save_baseline
+        save_run_file(RunStore.default(root).export_run(run_id), out)
+        console.print(f"Saved run file: {out}")
 
     if summary.pass_rate < min_pass_rate:
         console.print(f"[red]Below min pass rate {min_pass_rate:.1%}[/red]")
@@ -96,15 +104,35 @@ def report(run_id: str = typer.Option(..., "--run-id")):
     console.print(f"Wrote {path}")
 
 
+def _resolve_run(store: RunStore, run_id: Optional[str], run_file: Optional[Path], which: str) -> RunExport:
+    if bool(run_id) == bool(run_file):
+        raise typer.BadParameter(f"Pass exactly one of --{which} or --{which}-file")
+    try:
+        if run_file:
+            return load_run_file(run_file if run_file.is_absolute() else _project_root() / run_file)
+        return store.export_run(run_id)  # type: ignore[arg-type]
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from e
+
+
 @app.command()
 def compare(
-    baseline: str = typer.Option(..., "--baseline"),
-    candidate: str = typer.Option(..., "--candidate"),
+    baseline: Optional[str] = typer.Option(None, "--baseline", help="Baseline run id in the local store"),
+    candidate: Optional[str] = typer.Option(None, "--candidate", help="Candidate run id in the local store"),
+    baseline_file: Optional[Path] = typer.Option(
+        None, "--baseline-file", help="Baseline run JSON written by `run --save-baseline`"
+    ),
+    candidate_file: Optional[Path] = typer.Option(
+        None, "--candidate-file", help="Candidate run JSON written by `run --save-baseline`"
+    ),
     fail_on_score_drop: bool = typer.Option(False, "--fail-on-score-drop", help="Also exit 1 on score drops"),
 ):
-    text = print_compare_json(_project_root(), baseline, candidate)
-    console.print(text)
-    data = json.loads(text)
+    """Diff two runs (from the local store or exported JSON files). Exit 1 on regressions."""
+    store = RunStore.default(_project_root())
+    b = _resolve_run(store, baseline, baseline_file, "baseline")
+    c = _resolve_run(store, candidate, candidate_file, "candidate")
+    data = compare_exports(b, c)
+    console.print(json.dumps(data, indent=2))
     if data.get("regressions") or (fail_on_score_drop and data.get("score_drops")):
         raise typer.Exit(code=1)
 

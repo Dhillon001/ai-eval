@@ -4,7 +4,7 @@ import html
 import json
 from pathlib import Path
 
-from ai_eval.models import CaseOutcome, EvalCase, EvalRunSummary
+from ai_eval.models import CaseOutcome, EvalCase, EvalRunSummary, RunExport
 from ai_eval.store import RunStore
 
 
@@ -153,18 +153,20 @@ def generate_report(project_root: Path, run_id: str) -> Path:
     return write_html_report(summary, outcomes, cases, out_path)
 
 
+def compare_exports(baseline: RunExport, candidate: RunExport) -> dict:
+    return compare_runs(
+        baseline.summary,
+        candidate.summary,
+        baseline.outcomes,
+        candidate.outcomes,
+        baseline.cases_by_id(),
+        candidate.cases_by_id(),
+    )
+
+
 def print_compare_json(project_root: Path, baseline_id: str, candidate_id: str) -> str:
     store = RunStore.default(project_root)
-    b = store.get_run(baseline_id)
-    c = store.get_run(candidate_id)
-    if not b or not c:
+    if not store.get_run(baseline_id) or not store.get_run(candidate_id):
         raise ValueError("Baseline or candidate run not found")
-    result = compare_runs(
-        b,
-        c,
-        store.get_outcomes(baseline_id),
-        store.get_outcomes(candidate_id),
-        store.get_cases(baseline_id),
-        store.get_cases(candidate_id),
-    )
+    result = compare_exports(store.export_run(baseline_id), store.export_run(candidate_id))
     return json.dumps(result, indent=2)

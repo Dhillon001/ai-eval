@@ -4,7 +4,7 @@ Four shippable steps per day. Each step is one commit that passes `pytest` on it
 Steps are ticked (`[x]`) in the same commit that completes them.
 
 ## Thu Oct 22 — PR regression gate
-- [ ] 1. Core: `ai-eval run --save-baseline PATH` / `ai-eval compare --baseline-file PATH` so runs can be compared across machines (export/import a run as JSON).
+- [x] 1. Core: `ai-eval run --save-baseline PATH` / `ai-eval compare --baseline-file PATH` so runs can be compared across machines (export/import a run as JSON).
 - [ ] 2. Tests: round-trip export/import, compare against an imported baseline, exit codes.
 - [ ] 3. Wiring: CI job on `pull_request` that runs the mock suite on `main` and on the PR head, then `ai-eval compare --fail-on-score-drop`; bump `actions/checkout@v5` and `actions/setup-python@v6`.
 - [ ] 4. Docs: README "CI regression gate" section with the workflow snippet.
