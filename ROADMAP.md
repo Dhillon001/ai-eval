@@ -12,7 +12,7 @@ Steps are ticked (`[x]`) in the same commit that completes them.
 ## Fri Oct 23 — HTTP adapter (evaluate any service)
 - [x] 1. Core: `adapters/http.py` — POST JSON to `url`, request body built from a template with `{input}`/`{context}`, output extracted with a dotted `response_path` (e.g. `data.answer`), optional headers (env-var interpolation like `${API_TOKEN}`), timeout.
 - [x] 2. Tests: use `httpx.MockTransport`; success, non-2xx, timeout, bad `response_path`, header env interpolation.
-- [ ] 3. Wiring: register `http` in `build_adapter`; `configs/http_example.yaml`; optional `trace_path` to capture retrieved docs/tool calls into `RunResult.trace`.
+- [x] 3. Wiring: register `http` in `build_adapter`; `configs/http_example.yaml`; optional `trace_path` to capture retrieved docs/tool calls into `RunResult.trace`.
 - [ ] 4. Docs: README adapter table + HTTP example.
 
 ## Sat Oct 24 — Retrieval metrics

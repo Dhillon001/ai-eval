@@ -1,0 +1,24 @@
+name: http-example-v1
+description: Evaluate any JSON-over-HTTP service (e.g. your RAG or agent API) with the http adapter
+dataset: datasets/examples/rag_v1.jsonl
+adapter:
+  type: http
+  url: http://localhost:8000/answer
+  method: POST
+  timeout: 30
+  # {input} / {context} are filled from each case; a value that is exactly "{context}" becomes null when absent.
+  body_template:
+    question: "{input}"
+    context: "{context}"
+  # Dotted path to the answer in the JSON response (list indexes allowed, e.g. choices.0.message.content).
+  response_path: data.answer
+  # Header values may reference environment variables; an unset variable fails the case without a request.
+  headers:
+    Authorization: "Bearer ${API_TOKEN}"
+  # Optional: copy extra response fields into RunResult.trace for retrieval/trajectory scorers.
+  # Either a dotted path to an object to merge, or a mapping of trace key -> dotted path.
+  trace_path:
+    retrieved_ids: data.retrieved_ids
+    tool_calls: data.tool_calls
+scorers:
+  - type: checklist

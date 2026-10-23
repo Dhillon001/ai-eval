@@ -136,3 +136,45 @@ def test_helpers():
     assert extract_path({"a": "s"}, "a.b") is _MISSING
     assert extract_path({"a": [1, 2]}, "a.1") == 2
     assert extract_path({"a": 1}, "") == {"a": 1}
+
+
+def test_trace_path_mapping_captures_fields_and_reports_missing():
+    svc = FakeHTTPService(
+        json={"data": {"answer": "ok", "retrieved_ids": ["d1", "d2"], "tool_calls": [{"name": "search"}]}}
+    )
+    r = HTTPAdapter(
+        URL,
+        response_path="data.answer",
+        trace_path={
+            "retrieved_ids": "data.retrieved_ids",
+            "tool_calls": "data.tool_calls",
+            "scores": "data.scores",
+        },
+        transport=svc.transport,
+    ).run(_case())
+    assert r.error is None and r.output == "ok"
+    assert r.trace["retrieved_ids"] == ["d1", "d2"]
+    assert r.trace["tool_calls"] == [{"name": "search"}]
+    assert r.trace["trace_missing"] == ["data.scores"]
+
+
+def test_trace_path_string_merges_object_without_clobbering_reserved_keys():
+    svc = FakeHTTPService(
+        json={"answer": "ok", "debug": {"retrieved_ids": ["d9"], "status_code": 999, "adapter": "x"}}
+    )
+    r = HTTPAdapter(URL, response_path="answer", trace_path="debug", transport=svc.transport).run(_case())
+    assert r.trace["retrieved_ids"] == ["d9"]
+    assert r.trace["status_code"] == 200 and r.trace["adapter"] == "http"
+    assert "trace_missing" not in r.trace
+
+
+def test_trace_path_string_not_an_object_is_reported_not_fatal():
+    svc = FakeHTTPService(json={"answer": "ok", "debug": ["not", "a", "dict"]})
+    r = HTTPAdapter(URL, response_path="answer", trace_path="debug", transport=svc.transport).run(_case())
+    assert r.error is None and r.output == "ok"
+    assert r.trace["trace_missing"] == ["debug"]
+
+
+def test_trace_path_invalid_type_rejected():
+    with pytest.raises(ValueError, match="trace_path"):
+        HTTPAdapter(URL, trace_path=["data"])

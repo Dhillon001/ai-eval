@@ -13,6 +13,9 @@ from ai_eval.models import EvalCase, RunResult
 
 DEFAULT_BODY_TEMPLATE: dict[str, Any] = {"input": "{input}", "context": "{context}"}
 
+# Trace keys the adapter writes itself; values captured via ``trace_path`` never overwrite them.
+RESERVED_TRACE_KEYS = frozenset({"adapter", "url", "method", "request", "status_code", "trace_missing"})
+
 _ENV_VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _MISSING = object()
 
@@ -79,6 +82,32 @@ def extract_path(payload: Any, path: str) -> Any:
     return current
 
 
+def capture_trace(payload: Any, trace_path: str | dict[str, str] | None) -> tuple[dict[str, Any], list[str]]:
+    """Pull extra trace data (retrieved docs, tool calls, ...) out of a decoded JSON response.
+
+    ``trace_path`` is either a dotted path to an object whose keys are merged into the trace, or a
+    mapping of ``{trace_key: dotted_path}``. Returns ``(captured, missing_paths)``; paths that do not
+    resolve (or a string path that does not point at an object) are reported, never fatal.
+    """
+    if not trace_path:
+        return {}, []
+    if isinstance(trace_path, str):
+        value = extract_path(payload, trace_path)
+        if not isinstance(value, dict):
+            return {}, [trace_path]
+        captured = dict(value)
+        missing: list[str] = []
+    else:
+        captured, missing = {}, []
+        for key, path in trace_path.items():
+            value = extract_path(payload, path)
+            if value is _MISSING:
+                missing.append(path)
+            else:
+                captured[key] = value
+    return {k: v for k, v in captured.items() if k not in RESERVED_TRACE_KEYS}, missing
+
+
 def _as_text(value: Any) -> str:
     if isinstance(value, str):
         return value
@@ -92,7 +121,9 @@ class HTTPAdapter(SystemAdapter):
 
     The request body is built from ``body_template`` with ``{input}``/``{context}`` placeholders,
     header values may reference environment variables as ``${API_TOKEN}``, and the system output
-    is read from the JSON response at the dotted ``response_path``.
+    is read from the JSON response at the dotted ``response_path``. ``trace_path`` optionally copies
+    extra response fields (e.g. ``retrieved_ids``, ``tool_calls``) into ``RunResult.trace`` so
+    retrieval and trajectory scorers can use them.
     """
 
     name = "http"
@@ -105,6 +136,7 @@ class HTTPAdapter(SystemAdapter):
         headers: dict[str, str] | None = None,
         timeout: float = 30.0,
         method: str = "POST",
+        trace_path: str | dict[str, str] | None = None,
         client: httpx.Client | None = None,
         transport: httpx.BaseTransport | None = None,
     ):
@@ -116,6 +148,9 @@ class HTTPAdapter(SystemAdapter):
         self.headers = dict(headers or {})
         self.timeout = timeout
         self.method = method.upper()
+        if trace_path is not None and not isinstance(trace_path, (str, dict)):
+            raise ValueError("trace_path must be a dotted path string or a mapping of trace key -> path")
+        self.trace_path = trace_path
         self._client = client
         self._transport = transport
 
@@ -172,6 +207,11 @@ class HTTPAdapter(SystemAdapter):
         value = extract_path(payload, self.response_path)
         if value is _MISSING:
             return _fail(f"response_path '{self.response_path}' not found in response")
+
+        captured, missing = capture_trace(payload, self.trace_path)
+        trace.update(captured)
+        if missing:
+            trace["trace_missing"] = missing
 
         return RunResult(
             case_id=case.id,
