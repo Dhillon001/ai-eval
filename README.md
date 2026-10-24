@@ -40,6 +40,63 @@ ai-eval list-runs
 {"id": "refund-1", "input": "Can I get a refund?", "expected": "refund", "metadata": {"tags": ["support"]}, "checks": ["refund", "policy"]}
 ```
 
+## Adapters
+
+The adapter is the system under test. Set it with `adapter.type` in the suite YAML
+(other keys under `adapter:` are its options), or override with `--adapter` / `--model`.
+
+| type | what it calls | key options |
+|---|---|---|
+| `mock` | nothing — deterministic `echo:{input}` output for CI and local dev | `template` |
+| `openai` | OpenAI Chat Completions, or any OpenAI-compatible server via `base_url` (`OPENAI_API_KEY`) | `model`, `base_url`, `system_prompt`, `temperature`, `max_tokens` |
+| `anthropic` | Anthropic Messages API (`ANTHROPIC_API_KEY`) | `model`, `system_prompt`, `temperature`, `max_tokens` |
+| `http` | any JSON-over-HTTP service — your own RAG app, agent, or gateway | `url`, `body_template`, `response_path`, `headers`, `timeout`, `method`, `trace_path` |
+
+### HTTP adapter
+
+Point the suite at your service and describe how to build the request and where the answer is
+in the response ([`configs/http_example.yaml`](configs/http_example.yaml)):
+
+```yaml
+adapter:
+  type: http
+  url: http://localhost:8000/answer
+  method: POST                  # default POST
+  timeout: 30                   # seconds, default 30
+  body_template:                # default {"input": "{input}", "context": "{context}"}
+    question: "{input}"
+    context: "{context}"
+  response_path: data.answer    # dotted path; list indexes allowed (choices.0.message.content)
+  headers:
+    Authorization: "Bearer ${API_TOKEN}"
+  trace_path:                   # optional: copy response fields into RunResult.trace
+    retrieved_ids: data.retrieved_ids
+    tool_calls: data.tool_calls
+```
+
+```bash
+export API_TOKEN=...
+ai-eval run --suite configs/http_example.yaml
+```
+
+For a case `{"input": "Can I get a refund?"}` this POSTs
+`{"question": "Can I get a refund?", "context": null}` and, given a response like
+`{"data": {"answer": "Yes, within 30 days.", "retrieved_ids": ["policy-3"]}}`, scores the output
+`Yes, within 30 days.` with `trace.retrieved_ids == ["policy-3"]`.
+
+- **Templates**: a string that is exactly `"{input}"` or `"{context}"` is replaced by the raw value
+  (missing context → `null`); placeholders inside longer strings are substituted as text (missing
+  context → empty string). Nested objects and lists are rendered recursively.
+- **Headers**: `${NAME}` is read from the environment. If a variable is unset the case fails
+  with an error and no request is sent, so secrets never live in the YAML.
+- **Output**: a string at `response_path` is used as-is; any other JSON value is serialized.
+- **Trace**: `trace_path` is either a mapping of `trace key → dotted path` or one dotted path to
+  an object whose keys are merged in. Unresolved paths are listed in `trace.trace_missing` rather
+  than failing the case. The trace always records `url`, `method`, the rendered `request`, and
+  `status_code`.
+- **Errors**: timeouts, connection errors, non-2xx responses (with the first 200 chars of the
+  body), invalid JSON, and a missing `response_path` are recorded as case errors; the run continues.
+
 ## Scorers
 
 | type | what it checks |

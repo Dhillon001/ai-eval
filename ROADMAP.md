@@ -13,7 +13,7 @@ Steps are ticked (`[x]`) in the same commit that completes them.
 - [x] 1. Core: `adapters/http.py` — POST JSON to `url`, request body built from a template with `{input}`/`{context}`, output extracted with a dotted `response_path` (e.g. `data.answer`), optional headers (env-var interpolation like `${API_TOKEN}`), timeout.
 - [x] 2. Tests: use `httpx.MockTransport`; success, non-2xx, timeout, bad `response_path`, header env interpolation.
 - [x] 3. Wiring: register `http` in `build_adapter`; `configs/http_example.yaml`; optional `trace_path` to capture retrieved docs/tool calls into `RunResult.trace`.
-- [ ] 4. Docs: README adapter table + HTTP example.
+- [x] 4. Docs: README adapter table + HTTP example.
 
 ## Sat Oct 24 — Retrieval metrics
 - [ ] 1. Core: `scorers/retrieval.py` — `recall@k`, `MRR`, `hit_rate`, comparing `trace["retrieved_ids"]` to `case.metadata["expected_doc_ids"]`; configurable `k` and `metric`, pass threshold.
