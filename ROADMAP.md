@@ -16,7 +16,7 @@ Steps are ticked (`[x]`) in the same commit that completes them.
 - [x] 4. Docs: README adapter table + HTTP example.
 
 ## Sat Oct 24 — Retrieval metrics
-- [ ] 1. Core: `scorers/retrieval.py` — `recall@k`, `MRR`, `hit_rate`, comparing `trace["retrieved_ids"]` to `case.metadata["expected_doc_ids"]`; configurable `k` and `metric`, pass threshold.
+- [x] 1. Core: `scorers/retrieval.py` — `recall@k`, `MRR`, `hit_rate`, comparing `trace["retrieved_ids"]` to `case.metadata["expected_doc_ids"]`; configurable `k` and `metric`, pass threshold.
 - [ ] 2. Tests: perfect/partial/zero recall, MRR ranking, missing trace or expected ids (skip), k larger than list.
 - [ ] 3. Wiring: register `retrieval` scorer; mock adapter can emit `retrieved_ids` from `case.metadata["mock_retrieved_ids"]`; `configs/retrieval_suite.yaml` + dataset.
 - [ ] 4. Docs: README "Evaluating retrieval vs. generation" section.
