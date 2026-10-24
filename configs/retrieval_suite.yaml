@@ -1,0 +1,20 @@
+name: retrieval-v1
+description: Retrieval-only suite - recall@3, hit rate and MRR of retrieved doc ids vs. expected_doc_ids
+dataset: datasets/examples/retrieval_v1.jsonl
+adapter:
+  type: mock               # emits trace.retrieved_ids from case.metadata.mock_retrieved_ids
+  # For a real service, use the http adapter with trace_path, e.g.:
+  # type: http
+  # url: http://localhost:8000/answer
+  # response_path: answer
+  # trace_path: {retrieved_ids: retrieval.doc_ids}
+scorers:
+  - type: retrieval
+    metric: recall@3       # every expected doc must appear in the top 3
+  - type: retrieval
+    metric: hit_rate
+    k: 1                   # top-ranked doc is not required to be relevant ...
+    threshold: 0.0         # ... so this is reported, not gated
+  - type: retrieval
+    metric: mrr
+    threshold: 0.5         # first relevant doc ranked 1st or 2nd

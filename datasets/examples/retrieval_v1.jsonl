@@ -1,0 +1,5 @@
+{"id": "ret-refund-window", "input": "How long do I have to return an item?", "metadata": {"tags": ["retrieval", "policy"], "expected_doc_ids": ["policy-returns"], "mock_retrieved_ids": ["policy-returns", "faq-shipping", "policy-final-sale"]}}
+{"id": "ret-final-sale", "input": "Can I return a final-sale jacket?", "metadata": {"tags": ["retrieval", "policy", "multi-doc"], "expected_doc_ids": ["policy-returns", "policy-final-sale"], "mock_retrieved_ids": ["policy-final-sale", "policy-returns", "faq-sizing"]}}
+{"id": "ret-shipping-canada", "input": "Do you ship to Canada?", "metadata": {"tags": ["retrieval", "shipping"], "expected_doc_ids": ["faq-shipping-intl"], "mock_retrieved_ids": ["faq-shipping", "faq-shipping-intl", "policy-returns"]}}
+{"id": "ret-warranty", "input": "What does the two-year warranty cover?", "metadata": {"tags": ["retrieval", "warranty", "multi-doc"], "expected_doc_ids": ["warranty-terms", "warranty-exclusions"], "mock_retrieved_ids": ["warranty-terms", "faq-repairs", "warranty-exclusions"]}}
+{"id": "ret-no-expectation", "input": "Hi there!", "metadata": {"tags": ["retrieval", "smalltalk"], "mock_retrieved_ids": ["faq-contact"]}}
