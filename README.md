@@ -105,6 +105,72 @@ For a case `{"input": "Can I get a refund?"}` this POSTs
 | `checklist` | every string in `checks` appears in the output |
 | `llm_judge` | LLM grades output against `metadata.judge_criteria` / `expected` (`provider: openai\|anthropic`) |
 | `faithfulness` | LLM checks every claim is supported by `context` (RAG); skips cases without context |
+| `retrieval` | ranked `trace.retrieved_ids` vs. `metadata.expected_doc_ids` — `recall@k`, `hit_rate`, `mrr`; skips cases without either |
+
+## Evaluating retrieval vs. generation
+
+A RAG system can fail in two places: the retriever didn't fetch the right documents, or the
+generator had the right documents and still answered badly. Score them separately so a
+regression points at the stage that caused it.
+
+| stage | question | scorers | needs |
+|---|---|---|---|
+| retrieval | did the right docs come back, ranked high enough? | `retrieval` | `trace.retrieved_ids`, `metadata.expected_doc_ids` |
+| generation | is the answer correct and grounded in the context? | `exact`, `checklist`, `llm_judge`, `faithfulness` | `expected` / `checks` / `context` |
+
+**Retrieval cases** list the relevant doc ids per case; the system under test reports the ids
+it retrieved, in rank order:
+
+```json
+{"id": "ret-final-sale", "input": "Can I return a final-sale jacket?",
+ "metadata": {"expected_doc_ids": ["policy-returns", "policy-final-sale"]}}
+```
+
+The `http` adapter fills the trace from your service's response with `trace_path`
+(e.g. `trace_path: {retrieved_ids: retrieval.doc_ids}`). Offline, the `mock` adapter copies
+`metadata.mock_retrieved_ids` into `trace.retrieved_ids`, which is how
+[`configs/retrieval_suite.yaml`](configs/retrieval_suite.yaml) runs without a service:
+
+```yaml
+scorers:
+  - type: retrieval
+    metric: recall@3       # every expected doc must appear in the top 3
+  - type: retrieval
+    metric: hit_rate
+    k: 1                   # is the top-ranked doc relevant? (reported, not gated)
+    threshold: 0.0
+  - type: retrieval
+    metric: mrr
+    threshold: 0.5         # first relevant doc ranked 1st or 2nd
+```
+
+```bash
+ai-eval run --suite configs/retrieval_suite.yaml
+```
+
+Metrics are computed over the top `k` retrieved ids (no `k` = the whole list; duplicate ids
+are counted once):
+
+- `recall@k` — fraction of expected ids found in the top k. Default threshold `1.0`.
+- `hit_rate` — `1.0` if any expected id is in the top k, else `0.0`. Default threshold `1.0`.
+- `mrr` — `1 / rank` of the first expected id in the top k, `0.0` if none. Default threshold `0.5`.
+
+`k` can be set as an option or in the metric name (`recall@5`, `hit@1`). Each scorer is
+reported as `retrieval:<metric>@<k>`, so several can sit in one suite. Case details include
+`found`, `missing` and `first_relevant_rank`. Cases without `expected_doc_ids` or without
+`retrieved_ids` in the trace are skipped (pass, `details.skipped`); a non-list value is a
+failure. Override the field names with `trace_key` / `expected_key`.
+
+**Both stages in one suite**: give cases `context` + `checks` and `expected_doc_ids`, then list
+`retrieval` next to `checklist` / `faithfulness`. Reading the per-scorer results together:
+
+- retrieval fails, generation fails → fix the retriever first; the generator never saw the answer.
+- retrieval passes, generation fails → the problem is the prompt or model.
+- retrieval fails, generation passes → the answer came from the model's own knowledge or a
+  doc you didn't label; check `expected_doc_ids` and faithfulness.
+
+`compare` reports per-scorer mean deltas, so a PR that changes chunking or embeddings shows up
+as a `retrieval:*` drop rather than an unexplained answer-quality regression.
 
 ## Compare
 

@@ -19,7 +19,7 @@ Steps are ticked (`[x]`) in the same commit that completes them.
 - [x] 1. Core: `scorers/retrieval.py` — `recall@k`, `MRR`, `hit_rate`, comparing `trace["retrieved_ids"]` to `case.metadata["expected_doc_ids"]`; configurable `k` and `metric`, pass threshold.
 - [x] 2. Tests: perfect/partial/zero recall, MRR ranking, missing trace or expected ids (skip), k larger than list.
 - [x] 3. Wiring: register `retrieval` scorer; mock adapter can emit `retrieved_ids` from `case.metadata["mock_retrieved_ids"]`; `configs/retrieval_suite.yaml` + dataset.
-- [ ] 4. Docs: README "Evaluating retrieval vs. generation" section.
+- [x] 4. Docs: README "Evaluating retrieval vs. generation" section.
 
 ## Sun Oct 25 — Agent trajectory scorer
 - [ ] 1. Core: `scorers/trajectory.py` — compare `trace["tool_calls"]` (list of `{name, args}`) to `case.metadata["expected_tools"]`; modes `exact_order`, `subset`, `any_order`; optional arg matching; score = fraction matched.
