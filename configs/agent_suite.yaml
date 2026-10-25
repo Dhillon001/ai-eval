@@ -1,0 +1,21 @@
+name: agent-v1
+description: Agent trajectory suite - tool calls in trace.tool_calls vs. expected_tools in case metadata
+dataset: datasets/examples/agent_v1.jsonl
+adapter:
+  type: mock               # emits trace.tool_calls from case.metadata.mock_tool_calls
+  # For a real agent service, use the http adapter with trace_path, e.g.:
+  # type: http
+  # url: http://localhost:8000/agent
+  # response_path: answer
+  # trace_path: {tool_calls: steps.tool_calls}
+scorers:
+  - type: trajectory
+    mode: subset           # every expected call must happen, with the expected args ...
+    match_args: true       # ... extra calls (e.g. a policy check) are allowed
+  - type: trajectory
+    mode: any_order        # same set of calls, order ignored, extras penalized
+    threshold: 0.5
+  - type: trajectory
+    mode: exact_order      # strict sequence match, args included - reported, not gated
+    match_args: true
+    threshold: 0.0

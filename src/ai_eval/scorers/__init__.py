@@ -7,6 +7,7 @@ from ai_eval.scorers.checklist import ChecklistScorer
 from ai_eval.scorers.exact import ExactMatchScorer
 from ai_eval.scorers.llm_judge import LLMJudgeScorer
 from ai_eval.scorers.retrieval import RetrievalScorer
+from ai_eval.scorers.trajectory import TrajectoryScorer
 
 
 def build_scorer(spec: dict[str, Any]) -> Scorer:
@@ -22,4 +23,6 @@ def build_scorer(spec: dict[str, Any]) -> Scorer:
         return LLMJudgeScorer(mode="faithfulness", **opts)
     if kind == "retrieval":
         return RetrievalScorer(**opts)
+    if kind == "trajectory":
+        return TrajectoryScorer(**opts)
     raise ValueError(f"Unknown scorer type: {kind}")

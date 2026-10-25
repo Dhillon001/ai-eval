@@ -24,7 +24,7 @@ Steps are ticked (`[x]`) in the same commit that completes them.
 ## Sun Oct 25 — Agent trajectory scorer
 - [x] 1. Core: `scorers/trajectory.py` — compare `trace["tool_calls"]` (list of `{name, args}`) to `case.metadata["expected_tools"]`; modes `exact_order`, `subset`, `any_order`; optional arg matching; score = fraction matched.
 - [x] 2. Tests: each mode, extra/missing calls, arg mismatch, no trace (skip).
-- [ ] 3. Wiring: register `trajectory`; mock adapter emits `tool_calls` from `case.metadata["mock_tool_calls"]`; `configs/agent_suite.yaml` + dataset.
+- [x] 3. Wiring: register `trajectory`; mock adapter emits `tool_calls` from `case.metadata["mock_tool_calls"]`; `configs/agent_suite.yaml` + dataset.
 - [ ] 4. Docs: README "Evaluating agents" section; extend `EvalCase` docs with `expected_tools`.
 
 ## Mon Oct 26 — Reliability and cost
