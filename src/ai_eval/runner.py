@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from ai_eval.adapters import build_adapter
+from ai_eval.cache import JudgeCache
 from ai_eval.dataset import load_cases, load_suite
 from ai_eval.adapters.base import SystemAdapter
 from ai_eval.models import CaseOutcome, EvalCase, EvalRunSummary, RunResult, ScoreResult, utc_now
@@ -76,6 +77,7 @@ def run_stats(outcomes: list[CaseOutcome]) -> dict:
         "latency_ms_p95": round(_percentile(latencies, 95), 2),
         "prompt_tokens": sum(prompt) if prompt else None,
         "completion_tokens": sum(completion) if completion else None,
+        "judge_cache_hits": sum(1 for o in outcomes for s in o.scores if s.details.get("cached") is True),
     }
 
 
@@ -87,6 +89,8 @@ def run_suite(
     store: RunStore | None = None,
     concurrency: int = 1,
     on_case_done: Callable[[CaseOutcome], None] | None = None,
+    use_cache: bool = True,
+    cache: JudgeCache | None = None,
 ) -> tuple[str, EvalRunSummary, list[CaseOutcome]]:
     suite = load_suite(suite_path, project_root=project_root)
     cases = load_cases(Path(suite.dataset))
@@ -97,7 +101,9 @@ def run_suite(
         adapter_cfg.update(adapter_options)
     adapter = build_adapter(name, adapter_cfg)
 
-    scorers = [build_scorer(s) for s in suite.scorers]
+    if use_cache and cache is None:
+        cache = JudgeCache.default(project_root)
+    scorers = [build_scorer(s, cache=cache if use_cache else None) for s in suite.scorers]
 
     def _one(case: EvalCase) -> CaseOutcome:
         outcome = evaluate_case(case, adapter, scorers)

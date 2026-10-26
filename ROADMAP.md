@@ -29,7 +29,7 @@ Steps are ticked (`[x]`) in the same commit that completes them.
 
 ## Mon Oct 26 — Reliability and cost
 - [x] 1. Core: retry with exponential backoff + jitter for provider calls in `llm.py` (retry 429/5xx/timeouts, configurable `max_retries`).
-- [ ] 2. Core: on-disk judge cache in `.ai-eval/cache/` keyed by hash of (provider, model, prompt); `--no-cache` flag.
+- [x] 2. Core: on-disk judge cache in `.ai-eval/cache/` keyed by hash of (provider, model, prompt); `--no-cache` flag.
 - [ ] 3. Core: cost tracking — per-model price table (overridable in suite YAML), `cost_usd` in run metadata and CLI summary.
 - [ ] 4. Tests for retries (fake client raising then succeeding), cache hit/miss, cost math; README updates.
 

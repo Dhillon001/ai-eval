@@ -32,6 +32,9 @@ def run(
     save_baseline: Optional[Path] = typer.Option(
         None, "--save-baseline", help="Also export this run (summary, outcomes, cases) as JSON to PATH"
     ),
+    no_cache: bool = typer.Option(
+        False, "--no-cache", help="Bypass the judge cache in .ai-eval/cache/ (no reads or writes)"
+    ),
 ):
     """Run an eval suite and store results."""
     root = _project_root()
@@ -52,6 +55,7 @@ def run(
             adapter_options=opts or None,
             concurrency=concurrency,
             on_case_done=lambda _o: progress.advance(task),
+            use_cache=not no_cache,
         )
     report_path = generate_report(root, run_id)
 
@@ -65,6 +69,7 @@ def run(
         f"Errors: {m.get('errors', 0)} | latency p50/p95: {m.get('latency_ms_p50', 0):.0f}/"
         f"{m.get('latency_ms_p95', 0):.0f} ms"
         + (f" | tokens in/out: {m['prompt_tokens']}/{m['completion_tokens']}" if m.get("prompt_tokens") else "")
+        + (f" | judge cache hits: {m['judge_cache_hits']}" if m.get("judge_cache_hits") else "")
     )
     console.print(f"Report: {report_path}")
     if save_baseline:

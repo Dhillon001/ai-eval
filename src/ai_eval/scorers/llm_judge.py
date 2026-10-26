@@ -4,6 +4,7 @@ import json
 import re
 from typing import Any
 
+from ai_eval.cache import CachedResponse, JudgeCache, cache_key
 from ai_eval.llm import DEFAULT_MAX_RETRIES, LLMError, chat, make_client
 from ai_eval.models import EvalCase, RunResult, ScoreResult
 from ai_eval.scorers.base import Scorer
@@ -18,6 +19,8 @@ If the context does not contain the answer, the faithful response says so instea
 Return JSON only: {"pass": true|false, "score": 0.0-1.0, "reason": "...", "unsupported_claims": ["..."]}"""
 
 DEFAULT_MODELS = {"openai": "gpt-4o-mini", "anthropic": "claude-haiku-5-5"}
+
+JUDGE_SYSTEM = "You are an evaluation judge. Output JSON only."
 
 
 class LLMJudgeScorer(Scorer):
@@ -34,6 +37,7 @@ class LLMJudgeScorer(Scorer):
         mode: str = "criteria",
         max_retries: int = DEFAULT_MAX_RETRIES,
         client: Any = None,
+        cache: JudgeCache | None = None,
     ):
         if mode not in ("criteria", "faithfulness"):
             raise ValueError("llm_judge mode must be 'criteria' or 'faithfulness'")
@@ -46,6 +50,7 @@ class LLMJudgeScorer(Scorer):
             raise ValueError("max_retries must be >= 0")
         self.max_retries = max_retries
         self._client = client
+        self.cache = cache
         if mode == "faithfulness":
             self.name = "faithfulness"
 
@@ -88,22 +93,36 @@ Criteria:
         if prompt is None:
             return ScoreResult(scorer=self.name, passed=True, score=1.0, details={"skipped": "no context"})
 
-        try:
-            if self._client is None:
-                self._client = make_client(self.provider)
-            resp = chat(
-                self._client,
-                self.provider,
-                self.model,
-                "You are an evaluation judge. Output JSON only.",
-                prompt,
-                temperature=0.0,
-                max_retries=self.max_retries,
-            )
-        except LLMError as e:
-            return self._fail(str(e))
-        except Exception as e:
-            return self._fail(f"{type(e).__name__}: {e}")
+        key = cache_key(self.provider, self.model, prompt, system=JUDGE_SYSTEM)
+        cached = self.cache.get(key) if self.cache is not None else None
+        if cached is not None:
+            resp = cached
+        else:
+            try:
+                if self._client is None:
+                    self._client = make_client(self.provider)
+                resp = chat(
+                    self._client,
+                    self.provider,
+                    self.model,
+                    JUDGE_SYSTEM,
+                    prompt,
+                    temperature=0.0,
+                    max_retries=self.max_retries,
+                )
+            except LLMError as e:
+                return self._fail(str(e))
+            except Exception as e:
+                return self._fail(f"{type(e).__name__}: {e}")
+            if self.cache is not None:
+                self.cache.put(
+                    key,
+                    CachedResponse(
+                        text=resp.text or "",
+                        prompt_tokens=resp.prompt_tokens,
+                        completion_tokens=resp.completion_tokens,
+                    ),
+                )
 
         raw = resp.text or "{}"
         parsed = self._parse_json(raw)
@@ -120,7 +139,12 @@ Criteria:
             scorer=self.name,
             passed=passed,
             score=score,
-            details={"raw": raw, "parsed": parsed, "judge": f"{self.provider}:{self.model}"},
+            details={
+                "raw": raw,
+                "parsed": parsed,
+                "judge": f"{self.provider}:{self.model}",
+                "cached": cached is not None,
+            },
         )
 
     @staticmethod
