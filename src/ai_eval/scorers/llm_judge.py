@@ -4,7 +4,7 @@ import json
 import re
 from typing import Any
 
-from ai_eval.llm import LLMError, chat, make_client
+from ai_eval.llm import DEFAULT_MAX_RETRIES, LLMError, chat, make_client
 from ai_eval.models import EvalCase, RunResult, ScoreResult
 from ai_eval.scorers.base import Scorer
 
@@ -32,6 +32,7 @@ class LLMJudgeScorer(Scorer):
         rubric: str | None = None,
         pass_threshold: float = 0.7,
         mode: str = "criteria",
+        max_retries: int = DEFAULT_MAX_RETRIES,
         client: Any = None,
     ):
         if mode not in ("criteria", "faithfulness"):
@@ -41,6 +42,9 @@ class LLMJudgeScorer(Scorer):
         self.mode = mode
         self.rubric = rubric or (FAITHFULNESS_RUBRIC if mode == "faithfulness" else DEFAULT_RUBRIC)
         self.pass_threshold = pass_threshold
+        if max_retries < 0:
+            raise ValueError("max_retries must be >= 0")
+        self.max_retries = max_retries
         self._client = client
         if mode == "faithfulness":
             self.name = "faithfulness"
@@ -94,6 +98,7 @@ Criteria:
                 "You are an evaluation judge. Output JSON only.",
                 prompt,
                 temperature=0.0,
+                max_retries=self.max_retries,
             )
         except LLMError as e:
             return self._fail(str(e))

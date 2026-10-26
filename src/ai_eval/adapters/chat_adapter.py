@@ -4,7 +4,7 @@ import time
 from typing import Any
 
 from ai_eval.adapters.base import SystemAdapter
-from ai_eval.llm import LLMError, build_user_prompt, chat, make_client
+from ai_eval.llm import DEFAULT_MAX_RETRIES, LLMError, build_user_prompt, chat, make_client
 from ai_eval.models import EvalCase, RunResult
 
 
@@ -21,6 +21,7 @@ class ChatAdapter(SystemAdapter):
         system_prompt: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 1024,
+        max_retries: int = DEFAULT_MAX_RETRIES,
         client: Any = None,
     ):
         self.model = model or self.default_model
@@ -28,6 +29,9 @@ class ChatAdapter(SystemAdapter):
         self.system_prompt = system_prompt or "You are a helpful assistant."
         self.temperature = temperature
         self.max_tokens = max_tokens
+        if max_retries < 0:
+            raise ValueError("max_retries must be >= 0")
+        self.max_retries = max_retries
         self._client = client
 
     @property
@@ -56,6 +60,7 @@ class ChatAdapter(SystemAdapter):
                 user,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
+                max_retries=self.max_retries,
             )
         except Exception as e:
             return RunResult(
@@ -67,7 +72,13 @@ class ChatAdapter(SystemAdapter):
         return RunResult(
             case_id=case.id,
             output=resp.text,
-            trace={"provider": self.provider, "model": self.model, "system": self.system_prompt, "user": user},
+            trace={
+                "provider": self.provider,
+                "model": self.model,
+                "system": self.system_prompt,
+                "user": user,
+                "retries": resp.retries,
+            },
             latency_ms=(time.perf_counter() - start) * 1000,
             prompt_tokens=resp.prompt_tokens,
             completion_tokens=resp.completion_tokens,
