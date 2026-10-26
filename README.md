@@ -40,6 +40,21 @@ ai-eval list-runs
 {"id": "refund-1", "input": "Can I get a refund?", "expected": "refund", "metadata": {"tags": ["support"]}, "checks": ["refund", "policy"]}
 ```
 
+| field | type | used by |
+|---|---|---|
+| `id` | string, required | everything — results, reports and `compare` match on it |
+| `input` | string, required | the adapter (`{input}` in templates) |
+| `context` | string | adapters (`{context}`), `faithfulness` |
+| `expected` | string | `exact`, `llm_judge` |
+| `checks` | list of strings | `checklist` |
+| `metadata.tags` | list of strings | per-tag pass rates in `compare` |
+| `metadata.judge_criteria` | string | `llm_judge` |
+| `metadata.expected_doc_ids` | list of doc ids | `retrieval` — see [Evaluating retrieval vs. generation](#evaluating-retrieval-vs-generation) |
+| `metadata.expected_tools` | list of tool names or `{name, args}` | `trajectory` — see [Evaluating agents](#evaluating-agents) |
+| `metadata.mock_retrieved_ids` / `metadata.mock_tool_calls` | as above | `mock` adapter only: copied into the trace so suites run offline |
+
+Other `metadata` keys are kept and stored with the run.
+
 ## Adapters
 
 The adapter is the system under test. Set it with `adapter.type` in the suite YAML
@@ -106,6 +121,7 @@ For a case `{"input": "Can I get a refund?"}` this POSTs
 | `llm_judge` | LLM grades output against `metadata.judge_criteria` / `expected` (`provider: openai\|anthropic`) |
 | `faithfulness` | LLM checks every claim is supported by `context` (RAG); skips cases without context |
 | `retrieval` | ranked `trace.retrieved_ids` vs. `metadata.expected_doc_ids` — `recall@k`, `hit_rate`, `mrr`; skips cases without either |
+| `trajectory` | agent `trace.tool_calls` vs. `metadata.expected_tools` — `exact_order`, `any_order`, `subset`, optional arg matching; skips cases without either |
 
 ## Evaluating retrieval vs. generation
 
@@ -171,6 +187,73 @@ failure. Override the field names with `trace_key` / `expected_key`.
 
 `compare` reports per-scorer mean deltas, so a PR that changes chunking or embeddings shows up
 as a `retrieval:*` drop rather than an unexplained answer-quality regression.
+
+## Evaluating agents
+
+An agent can reach the right answer by the wrong path — skipping a lookup, calling a refund
+tool twice, or guessing an argument. The `trajectory` scorer checks the tool calls the agent
+made against the ones each case expects, alongside the usual output scorers.
+
+**Agent cases** list the expected calls in `metadata.expected_tools`. Each entry is a bare tool
+name (`"lookup_order"`) or `{name, args}`; `args` only matter when the scorer sets
+`match_args: true`:
+
+```json
+{"id": "agent-order-status", "input": "Where is my order A1001?",
+ "metadata": {"expected_tools": [
+   {"name": "lookup_order", "args": {"order_id": "A1001"}},
+   {"name": "get_shipping_status", "args": {"tracking_id": "1Z999"}}]}}
+```
+
+The system under test reports what it actually called as `trace.tool_calls`, a list in call
+order. Entries may be `{name, args}`, `{name, arguments}` (arguments may be a JSON string, as
+OpenAI returns them), OpenAI-style `{"function": {...}}`, or bare names. With the `http`
+adapter, map it from your service's response (`trace_path: {tool_calls: steps.tool_calls}`).
+Offline, the `mock` adapter copies `metadata.mock_tool_calls` into `trace.tool_calls`, which is
+how [`configs/agent_suite.yaml`](configs/agent_suite.yaml) runs without a service:
+
+```yaml
+scorers:
+  - type: trajectory
+    mode: subset           # every expected call must happen, with the expected args ...
+    match_args: true       # ... extra calls (e.g. a policy check) are allowed
+  - type: trajectory
+    mode: any_order        # same set of calls, order ignored, extras penalized
+    threshold: 0.5
+  - type: trajectory
+    mode: exact_order      # strict sequence match, args included - reported, not gated
+    match_args: true
+    threshold: 0.0
+```
+
+```bash
+ai-eval run --suite configs/agent_suite.yaml
+```
+
+The score is the fraction of calls matched, in [0, 1]; a case passes when it reaches
+`threshold` (default `1.0`).
+
+| mode | order | extra calls | score |
+|---|---|---|---|
+| `exact_order` (default) | must match | penalized | longest in-order match / max(expected, actual) |
+| `any_order` | ignored | penalized | matched / max(expected, actual) |
+| `subset` | ignored | allowed | matched / expected |
+
+- **Arg matching** (`match_args: true`): an expected entry with `args` matches a call whose args
+  contain those key/value pairs — extra actual args (say, a `carrier` the agent added) are fine.
+  Expected entries without `args` match on name alone. Repeated tools are matched one-to-one,
+  so expecting `get_weather` for Paris and Tokyo needs two calls.
+- **Details**: each result lists `matched`, `missing`, `extra` (reported but not penalized in
+  `subset` mode) and `arg_mismatches` — expected tools that were called, but with the wrong
+  args.
+- **Skips and errors**: cases without `expected_tools` or without `tool_calls` in the trace are
+  skipped (pass, `details.skipped`). An explicit empty `expected_tools: []` means "no tools
+  should be called", so any call fails it in the strict modes. Malformed entries (no name,
+  non-object args) fail the case. Override the field names with `trace_key` / `expected_key`.
+
+Each scorer is reported as `trajectory:<mode>`, so one suite can gate on a lenient mode and
+just report a strict one, as above. Pair it with `checklist` or `llm_judge` on the final answer
+to tell "right tools, wrong answer" from "right answer, wrong tools".
 
 ## Compare
 

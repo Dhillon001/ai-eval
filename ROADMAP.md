@@ -25,7 +25,7 @@ Steps are ticked (`[x]`) in the same commit that completes them.
 - [x] 1. Core: `scorers/trajectory.py` — compare `trace["tool_calls"]` (list of `{name, args}`) to `case.metadata["expected_tools"]`; modes `exact_order`, `subset`, `any_order`; optional arg matching; score = fraction matched.
 - [x] 2. Tests: each mode, extra/missing calls, arg mismatch, no trace (skip).
 - [x] 3. Wiring: register `trajectory`; mock adapter emits `tool_calls` from `case.metadata["mock_tool_calls"]`; `configs/agent_suite.yaml` + dataset.
-- [ ] 4. Docs: README "Evaluating agents" section; extend `EvalCase` docs with `expected_tools`.
+- [x] 4. Docs: README "Evaluating agents" section; extend `EvalCase` docs with `expected_tools`.
 
 ## Mon Oct 26 — Reliability and cost
 - [ ] 1. Core: retry with exponential backoff + jitter for provider calls in `llm.py` (retry 429/5xx/timeouts, configurable `max_retries`).

@@ -7,6 +7,19 @@ from pydantic import BaseModel, Field
 
 
 class EvalCase(BaseModel):
+    """One test case, loaded from a JSONL line.
+
+    ``metadata`` is free-form; keys read by built-in components:
+
+    - ``tags``: list of strings, used for per-tag pass rates in ``compare``.
+    - ``judge_criteria``: grading rubric for the ``llm_judge`` scorer.
+    - ``expected_doc_ids``: relevant doc ids for the ``retrieval`` scorer.
+    - ``expected_tools``: expected agent tool calls (tool names or ``{name, args}``) for the
+      ``trajectory`` scorer.
+    - ``mock_retrieved_ids`` / ``mock_tool_calls``: emitted into the trace by the ``mock``
+      adapter so retrieval and agent suites run offline.
+    """
+
     id: str
     input: str
     context: str | None = None
