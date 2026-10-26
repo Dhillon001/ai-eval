@@ -63,6 +63,8 @@ class SuiteConfig(BaseModel):
     scorers: list[dict[str, Any]] = Field(default_factory=list)
     adapter: dict[str, Any] = Field(default_factory=dict)
     description: str = ""
+    # Per-model price overrides (USD per million tokens), merged over ai_eval.pricing.DEFAULT_PRICES.
+    pricing: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class EvalRunSummary(BaseModel):

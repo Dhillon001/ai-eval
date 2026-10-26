@@ -71,6 +71,15 @@ def run(
         + (f" | tokens in/out: {m['prompt_tokens']}/{m['completion_tokens']}" if m.get("prompt_tokens") else "")
         + (f" | judge cache hits: {m['judge_cache_hits']}" if m.get("judge_cache_hits") else "")
     )
+    if m.get("cost_usd") is not None:
+        console.print(
+            f"Cost: ${m['cost_usd']:.4f} (system ${m.get('cost_usd_system') or 0:.4f}"
+            f" + judge ${m.get('cost_usd_judge') or 0:.4f})"
+        )
+    if m.get("unpriced_models"):
+        console.print(
+            f"[yellow]No price for: {', '.join(m['unpriced_models'])} (add them under `pricing:` in the suite)[/yellow]"
+        )
     console.print(f"Report: {report_path}")
     if save_baseline:
         out = save_baseline if save_baseline.is_absolute() else root / save_baseline

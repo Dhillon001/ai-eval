@@ -13,6 +13,7 @@ from ai_eval.cache import JudgeCache
 from ai_eval.dataset import load_cases, load_suite
 from ai_eval.adapters.base import SystemAdapter
 from ai_eval.models import CaseOutcome, EvalCase, EvalRunSummary, RunResult, ScoreResult, utc_now
+from ai_eval.pricing import PriceTable, run_cost
 from ai_eval.scorers.base import Scorer
 from ai_eval.scorers import build_scorer
 from ai_eval.store import RunStore
@@ -100,6 +101,7 @@ def run_suite(
     if adapter_options:
         adapter_cfg.update(adapter_options)
     adapter = build_adapter(name, adapter_cfg)
+    prices = PriceTable.from_config(suite.pricing)
 
     if use_cache and cache is None:
         cache = JudgeCache.default(project_root)
@@ -140,7 +142,12 @@ def run_suite(
         passed=passed,
         pass_rate=passed / total if total else 0.0,
         mean_score=mean_score,
-        metadata={"suite_path": str(suite_path), "concurrency": concurrency, **run_stats(outcomes)},
+        metadata={
+            "suite_path": str(suite_path),
+            "concurrency": concurrency,
+            **run_stats(outcomes),
+            **run_cost(outcomes, prices, default_model=adapter_cfg.get("model")),
+        },
     )
 
     if store is None:

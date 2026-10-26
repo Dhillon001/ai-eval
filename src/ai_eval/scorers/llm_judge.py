@@ -144,6 +144,8 @@ Criteria:
                 "parsed": parsed,
                 "judge": f"{self.provider}:{self.model}",
                 "cached": cached is not None,
+                "prompt_tokens": resp.prompt_tokens,
+                "completion_tokens": resp.completion_tokens,
             },
         )
 
