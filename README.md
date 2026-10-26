@@ -21,6 +21,10 @@ datasets in, scored runs out, regressions caught before they merge.
 [CI gate](#-ci-regression-gate) •
 [Cost & reliability](#-reliability-and-cost)
 
+<br/><br/>
+
+<img src="docs/overview.svg" alt="How ai-eval works: 1. write test cases in JSONL, 2. run them through your AI system (OpenAI, Anthropic, your HTTP API, or an offline mock), 3. score every answer (checklist, LLM judge, agent tool calls, retrieval), 4. compare against main and block the PR on regressions" width="100%"/>
+
 </div>
 
 ---
