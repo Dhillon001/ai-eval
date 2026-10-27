@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ai_eval.models import CaseOutcome, EvalCase, EvalRunSummary, RunResult, ScoreResult, utc_now
-from ai_eval.report import _tag_stats, write_html_report
+from ai_eval.report import _order_failures_first, _tag_stats, write_html_report
 
 
 def _summary(**metadata) -> EvalRunSummary:
@@ -53,3 +53,26 @@ def test_html_cost_card_without_pricing(tmp_path: Path):
     cases, outcomes = _fixture()
     doc = write_html_report(_summary(), outcomes, cases, tmp_path / "r.html").read_text()
     assert "no priced model" in doc and "card bad" not in doc
+
+
+def test_failures_first_ordering():
+    _, outcomes = _fixture()
+    low = CaseOutcome(case_id="d", run=RunResult(case_id="d", output="z"),
+                      scores=[ScoreResult(scorer="exact", passed=False, score=0.1)])
+    ordered = [o.case_id for o in _order_failures_first(outcomes + [low])]
+    assert ordered == ["c", "d", "b", "a"]  # error, lowest-scoring failure, other failure, pass
+
+
+def test_html_case_details_collapsible(tmp_path: Path):
+    cases, outcomes = _fixture()
+    outcomes[1].run.trace = {"retrieved_ids": ["doc-7"]}
+    outcomes[1].scores.append(
+        ScoreResult(scorer="llm_judge", passed=False, score=0.2,
+                    details={"parsed": {"reason": "missed the date"}, "judge": "openai:gpt"})
+    )
+    doc = write_html_report(_summary(), outcomes, cases, tmp_path / "r.html").read_text()
+    assert doc.index("<code>c</code>") < doc.index("<code>b</code>") < doc.index("<code>a</code>")
+    assert "<details class='case error' open>" in doc
+    assert "<details class='case fail' open>" in doc
+    assert "<details class='case pass'>" in doc
+    assert "Judge:</b> missed the date" in doc and "doc-7" in doc and "Trace</summary>" in doc

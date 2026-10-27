@@ -4,7 +4,7 @@ import html
 import json
 from pathlib import Path
 
-from ai_eval.models import CaseOutcome, EvalCase, EvalRunSummary, RunExport
+from ai_eval.models import CaseOutcome, EvalCase, EvalRunSummary, RunExport, ScoreResult
 from ai_eval.store import RunStore
 
 
@@ -156,27 +156,90 @@ def compare_runs(
     return result
 
 
+def _order_failures_first(outcomes: list[CaseOutcome]) -> list[CaseOutcome]:
+    """Errors first, then other failures (lowest score first), then passes in original order."""
+    def key(o: CaseOutcome) -> tuple:
+        if o.passed:
+            return (2, 0.0)
+        return (0 if o.run.error else 1, _case_score(o))
+
+    return sorted(outcomes, key=key)
+
+
+def _judge_reason(s: ScoreResult) -> str | None:
+    parsed = s.details.get("parsed")
+    if isinstance(parsed, dict) and parsed.get("reason"):
+        return str(parsed["reason"])
+    return None
+
+
+def _pre(label: str, text: str | None) -> str:
+    if not text:
+        return ""
+    return f"<div class='field'><div class='flabel'>{html.escape(label)}</div><pre>{html.escape(text)}</pre></div>"
+
+
+def _score_table(scores: list[ScoreResult]) -> str:
+    if not scores:
+        return ""
+    rows = []
+    for s in scores:
+        reason = _judge_reason(s)
+        extra = {k: v for k, v in s.details.items() if k not in ("raw", "parsed")}
+        detail_bits = []
+        if reason:
+            detail_bits.append(f"<div class='reason'><b>Judge:</b> {html.escape(reason)}</div>")
+        if extra:
+            detail_bits.append(f"<pre>{html.escape(json.dumps(extra, indent=2, default=str))}</pre>")
+        rows.append(
+            f"<tr class='{'pass' if s.passed else 'fail'}'><td>{html.escape(s.scorer)}</td>"
+            f"<td>{'pass' if s.passed else 'fail'}</td><td>{s.score:.2f}</td>"
+            f"<td>{''.join(detail_bits)}</td></tr>"
+        )
+    return (
+        "<table class='scores'><thead><tr><th>Scorer</th><th>Result</th><th>Score</th>"
+        f"<th>Details</th></tr></thead><tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _case_details(outcome: CaseOutcome, case: EvalCase | None) -> str:
+    status = "error" if outcome.run.error else ("pass" if outcome.passed else "fail")
+    badges = " ".join(
+        f"<span class='badge {'pass' if s.passed else 'fail'}'>{html.escape(s.scorer)} {s.score:.2f}</span>"
+        for s in outcome.scores
+    )
+    body = [
+        _pre("Error", outcome.run.error),
+        _pre("Input", case.input if case else None),
+        _pre("Context", case.context if case else None),
+        _pre("Expected", case.expected if case else None),
+        _pre("Output", outcome.run.output),
+        _score_table(outcome.scores),
+    ]
+    if outcome.run.trace:
+        body.append(
+            "<details class='trace'><summary>Trace</summary>"
+            f"<pre>{html.escape(json.dumps(outcome.run.trace, indent=2, default=str))}</pre></details>"
+        )
+    open_attr = "" if outcome.passed else " open"
+    return (
+        f"<details class='case {status}'{open_attr}><summary>"
+        f"<span class='status'>{status}</span> <code>{html.escape(outcome.case_id)}</code>"
+        f" <span class='mean'>score {_case_score(outcome):.2f}</span>"
+        f" <span class='lat'>{outcome.run.latency_ms:.0f} ms</span> {badges}</summary>"
+        f"<div class='body'>{''.join(body)}</div></details>"
+    )
+
+
 def write_html_report(
     summary: EvalRunSummary,
     outcomes: list[CaseOutcome],
     cases: dict[str, EvalCase],
     out_path: Path,
 ) -> Path:
-    rows = []
-    for outcome in outcomes:
-        case = cases.get(outcome.case_id)
-        inp = html.escape(case.input if case else "")
-        out = html.escape(outcome.run.output)
-        status = "pass" if outcome.passed else "fail"
-        err = html.escape(outcome.run.error or "")
-        score_bits = ", ".join(
-            f"{s.scorer}: {s.score:.2f} ({'ok' if s.passed else 'fail'})" for s in outcome.scores
-        )
-        rows.append(
-            f"<tr class='{status}'><td>{html.escape(outcome.case_id)}</td>"
-            f"<td>{status}</td><td><pre>{inp}</pre></td><td><pre>{out}</pre></td>"
-            f"<td>{html.escape(score_bits)}</td><td>{err}</td></tr>"
-        )
+    ordered = _order_failures_first(outcomes)
+    n_fail = sum(1 for o in outcomes if not o.passed)
+    case_blocks = "".join(_case_details(o, cases.get(o.case_id)) for o in ordered)
 
     doc = f"""<!DOCTYPE html>
 <html>
@@ -189,6 +252,22 @@ def write_html_report(
     th, td {{ border: 1px solid #ccc; padding: 0.5rem; vertical-align: top; }}
     tr.fail {{ background: #fff0f0; }}
     tr.pass {{ background: #f6fff6; }}
+    details.case {{ border: 1px solid #ccc; border-left-width: 6px; border-radius: 6px; margin: 0.5rem 0; }}
+    details.case.pass {{ border-left-color: #2a2; }}
+    details.case.fail {{ border-left-color: #d33; }}
+    details.case.error {{ border-left-color: #a0a; }}
+    details.case > summary {{ cursor: pointer; padding: 0.5rem 0.75rem; }}
+    details.case .body {{ padding: 0 0.75rem 0.75rem; }}
+    .status {{ font-weight: 600; text-transform: uppercase; font-size: 0.8rem; }}
+    .mean, .lat {{ color: #555; font-size: 0.85rem; margin-left: 0.5rem; }}
+    .badge {{ font-size: 0.75rem; border-radius: 4px; padding: 0.1rem 0.4rem; margin-left: 0.25rem; }}
+    .badge.pass {{ background: #e3f6e3; }}
+    .badge.fail {{ background: #fbe0e0; }}
+    .field {{ margin: 0.5rem 0; }}
+    .flabel {{ font-size: 0.8rem; color: #555; text-transform: uppercase; }}
+    .field pre {{ background: #f7f7f7; padding: 0.4rem; border-radius: 4px; }}
+    table.scores {{ margin: 0.5rem 0; }}
+    .reason {{ margin-bottom: 0.25rem; }}
     pre {{ white-space: pre-wrap; margin: 0; }}
     .cards {{ display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 1rem 0 1.5rem; }}
     .card {{ border: 1px solid #ccc; border-radius: 8px; padding: 0.75rem 1rem; min-width: 10rem; }}
@@ -206,12 +285,8 @@ def write_html_report(
   {_summary_cards(summary)}
   {_tag_table(outcomes, cases)}
   <h2>Cases</h2>
-  <table>
-    <thead><tr><th>Case</th><th>Status</th><th>Input</th><th>Output</th><th>Scores</th><th>Error</th></tr></thead>
-    <tbody>
-      {''.join(rows)}
-    </tbody>
-  </table>
+  <p>{n_fail} failing case(s) shown first and expanded; passing cases are collapsed.</p>
+  {case_blocks}
 </body>
 </html>
 """
