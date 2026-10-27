@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -10,7 +11,7 @@ from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn
 from rich.table import Table
 
 from ai_eval.models import RunExport
-from ai_eval.report import compare_exports, generate_report
+from ai_eval.report import compare_exports, generate_report, write_compare_report
 from ai_eval.runner import run_suite
 from ai_eval.store import RunStore, load_run_file, save_run_file
 
@@ -112,9 +113,55 @@ def list_runs(limit: int = typer.Option(20, "--limit")):
     console.print(table)
 
 
+def _load_run_ref(store: RunStore, ref: str) -> RunExport:
+    """A run id in the local store, or a path to a run JSON written by `run --save-baseline`."""
+    path = Path(ref)
+    path = path if path.is_absolute() else _project_root() / path
+    try:
+        if ref.endswith(".json") or path.is_file():
+            return load_run_file(path)
+        return store.export_run(ref)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from e
+
+
+def _safe_name(ref: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in Path(ref).stem)
+
+
 @app.command()
-def report(run_id: str = typer.Option(..., "--run-id")):
-    path = generate_report(_project_root(), run_id)
+def report(
+    run_id: Optional[str] = typer.Option(None, "--run-id", help="Write the HTML report for one run"),
+    compare: Optional[tuple[str, str]] = typer.Option(
+        None, "--compare", metavar="A B",
+        help="Side-by-side HTML diff of two runs (A = baseline, B = candidate); each is a run id or a run JSON file",
+    ),
+    out: Optional[Path] = typer.Option(None, "--out", help="Output HTML path (default: .ai-eval/reports/)"),
+):
+    """Write an HTML report for one run, or a side-by-side comparison of two runs."""
+    root = _project_root()
+    if bool(run_id) == bool(compare):
+        raise typer.BadParameter("Pass exactly one of --run-id or --compare A B")
+    if run_id:
+        path = generate_report(root, run_id)
+        if out:
+            dest = out if out.is_absolute() else root / out
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            path = Path(shutil.copyfile(path, dest))
+        console.print(f"Wrote {path}")
+        return
+
+    a_ref, b_ref = compare  # type: ignore[misc]
+    store = RunStore.default(root)
+    a, b = _load_run_ref(store, a_ref), _load_run_ref(store, b_ref)
+    dest = out or Path(".ai-eval") / "reports" / f"compare_{_safe_name(a_ref)}_vs_{_safe_name(b_ref)}.html"
+    path = write_compare_report(a, b, dest if dest.is_absolute() else root / dest)
+    diff = compare_exports(a, b)
+    console.print(
+        f"Regressions: {len(diff['regressions'])} | score drops: {len(diff['score_drops'])} | "
+        f"improvements: {len(diff['improvements'])} | pass rate {a.summary.pass_rate:.1%} -> "
+        f"{b.summary.pass_rate:.1%}"
+    )
     console.print(f"Wrote {path}")
 
 

@@ -8,6 +8,39 @@ from ai_eval.models import CaseOutcome, EvalCase, EvalRunSummary, RunExport, Sco
 from ai_eval.store import RunStore
 
 
+_BASE_CSS = """\
+    body { font-family: system-ui, sans-serif; margin: 1.5rem; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ccc; padding: 0.5rem; vertical-align: top; }
+    tr.fail { background: #fff0f0; }
+    tr.pass { background: #f6fff6; }
+    details.case { border: 1px solid #ccc; border-left-width: 6px; border-radius: 6px; margin: 0.5rem 0; }
+    details.case.pass { border-left-color: #2a2; }
+    details.case.fail { border-left-color: #d33; }
+    details.case.error { border-left-color: #a0a; }
+    details.case > summary { cursor: pointer; padding: 0.5rem 0.75rem; }
+    details.case .body { padding: 0 0.75rem 0.75rem; }
+    .status { font-weight: 600; text-transform: uppercase; font-size: 0.8rem; }
+    .mean, .lat { color: #555; font-size: 0.85rem; margin-left: 0.5rem; }
+    .badge { font-size: 0.75rem; border-radius: 4px; padding: 0.1rem 0.4rem; margin-left: 0.25rem; }
+    .badge.pass { background: #e3f6e3; }
+    .badge.fail { background: #fbe0e0; }
+    .field { margin: 0.5rem 0; }
+    .flabel { font-size: 0.8rem; color: #555; text-transform: uppercase; }
+    .field pre { background: #f7f7f7; padding: 0.4rem; border-radius: 4px; }
+    table.scores { margin: 0.5rem 0; }
+    .reason { margin-bottom: 0.25rem; }
+    pre { white-space: pre-wrap; margin: 0; }
+    .cards { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 1rem 0 1.5rem; }
+    .card { border: 1px solid #ccc; border-radius: 8px; padding: 0.75rem 1rem; min-width: 10rem; }
+    .card .label { font-size: 0.8rem; color: #555; text-transform: uppercase; letter-spacing: 0.03em; }
+    .card .value { font-size: 1.6rem; font-weight: 600; margin: 0.2rem 0; }
+    .card .sub { font-size: 0.8rem; color: #666; }
+    .card.bad { border-color: #d33; background: #fff0f0; }
+    table.tags { width: auto; margin-bottom: 1.5rem; }
+"""
+
+
 def _case_score(o: CaseOutcome) -> float:
     if not o.scores:
         return 1.0 if o.run.error is None else 0.0
@@ -247,36 +280,7 @@ def write_html_report(
   <meta charset="utf-8"/>
   <title>Eval {html.escape(summary.run_id)}</title>
   <style>
-    body {{ font-family: system-ui, sans-serif; margin: 1.5rem; }}
-    table {{ border-collapse: collapse; width: 100%; }}
-    th, td {{ border: 1px solid #ccc; padding: 0.5rem; vertical-align: top; }}
-    tr.fail {{ background: #fff0f0; }}
-    tr.pass {{ background: #f6fff6; }}
-    details.case {{ border: 1px solid #ccc; border-left-width: 6px; border-radius: 6px; margin: 0.5rem 0; }}
-    details.case.pass {{ border-left-color: #2a2; }}
-    details.case.fail {{ border-left-color: #d33; }}
-    details.case.error {{ border-left-color: #a0a; }}
-    details.case > summary {{ cursor: pointer; padding: 0.5rem 0.75rem; }}
-    details.case .body {{ padding: 0 0.75rem 0.75rem; }}
-    .status {{ font-weight: 600; text-transform: uppercase; font-size: 0.8rem; }}
-    .mean, .lat {{ color: #555; font-size: 0.85rem; margin-left: 0.5rem; }}
-    .badge {{ font-size: 0.75rem; border-radius: 4px; padding: 0.1rem 0.4rem; margin-left: 0.25rem; }}
-    .badge.pass {{ background: #e3f6e3; }}
-    .badge.fail {{ background: #fbe0e0; }}
-    .field {{ margin: 0.5rem 0; }}
-    .flabel {{ font-size: 0.8rem; color: #555; text-transform: uppercase; }}
-    .field pre {{ background: #f7f7f7; padding: 0.4rem; border-radius: 4px; }}
-    table.scores {{ margin: 0.5rem 0; }}
-    .reason {{ margin-bottom: 0.25rem; }}
-    pre {{ white-space: pre-wrap; margin: 0; }}
-    .cards {{ display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 1rem 0 1.5rem; }}
-    .card {{ border: 1px solid #ccc; border-radius: 8px; padding: 0.75rem 1rem; min-width: 10rem; }}
-    .card .label {{ font-size: 0.8rem; color: #555; text-transform: uppercase; letter-spacing: 0.03em; }}
-    .card .value {{ font-size: 1.6rem; font-weight: 600; margin: 0.2rem 0; }}
-    .card .sub {{ font-size: 0.8rem; color: #666; }}
-    .card.bad {{ border-color: #d33; background: #fff0f0; }}
-    table.tags {{ width: auto; margin-bottom: 1.5rem; }}
-  </style>
+{_BASE_CSS}  </style>
 </head>
 <body>
   <h1>Run {html.escape(summary.run_id)}</h1>
@@ -323,3 +327,247 @@ def print_compare_json(project_root: Path, baseline_id: str, candidate_id: str) 
         raise ValueError("Baseline or candidate run not found")
     result = compare_exports(store.export_run(baseline_id), store.export_run(candidate_id))
     return json.dumps(result, indent=2)
+
+
+# --- side-by-side comparison report -----------------------------------------
+
+_COMPARE_CSS = """\
+    .card.good { border-color: #2a2; background: #f6fff6; }
+    .delta { font-size: 0.85rem; font-weight: 600; }
+    .delta.up { color: #1a7f1a; }
+    .delta.down { color: #c22; }
+    .delta.flat { color: #777; }
+    table.diff td.num { text-align: right; white-space: nowrap; }
+    tr.regression { background: #fff0f0; }
+    tr.score_drop { background: #fff8ec; }
+    tr.improvement { background: #f0fff0; }
+    tr.missing, tr.new { background: #f4f4f8; }
+    .kind { font-weight: 600; text-transform: uppercase; font-size: 0.75rem; white-space: nowrap; }
+    .side { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+    .side pre { background: #f7f7f7; padding: 0.4rem; border-radius: 4px; }
+    details.out > summary { cursor: pointer; color: #555; font-size: 0.85rem; }
+"""
+
+# Display order for case rows: what needs attention first.
+_DIFF_KINDS = ("regression", "score_drop", "improvement", "missing", "new", "unchanged")
+_DIFF_LABELS = {
+    "regression": "Regression",
+    "score_drop": "Score drop",
+    "improvement": "Improvement",
+    "missing": "Missing in B",
+    "new": "New in B",
+    "unchanged": "Unchanged",
+}
+
+
+def _fmt_delta(
+    delta: float | None, fmt: str, *, higher_is_better: bool = True, prefix: str = "", unit: str = ""
+) -> str:
+    """A signed, colour-coded delta span; ``fmt`` is applied to the absolute value."""
+    if delta is None:
+        return "<span class='delta flat'>n/a</span>"
+    if abs(delta) < 1e-9:
+        return "<span class='delta flat'>±0</span>"
+    good = (delta > 0) == higher_is_better
+    sign = "+" if delta > 0 else "−"
+    return f"<span class='delta {'up' if good else 'down'}'>{sign}{prefix}{format(abs(delta), fmt)}{unit}</span>"
+
+
+def _compare_cards(a: EvalRunSummary, b: EvalRunSummary) -> str:
+    am, bm = a.metadata, b.metadata
+
+    def num(m: dict, key: str) -> float | None:
+        v = m.get(key)
+        return float(v) if isinstance(v, (int, float)) else None
+
+    def diff(x: float | None, y: float | None) -> float | None:
+        return None if x is None or y is None else y - x
+
+    a_err, b_err = float(am.get("errors", 0)), float(bm.get("errors", 0))
+    a_cost, b_cost = num(am, "cost_usd"), num(bm, "cost_usd")
+    rows = [
+        ("Pass rate", f"{a.pass_rate:.1%}", f"{b.pass_rate:.1%}",
+         _fmt_delta((b.pass_rate - a.pass_rate) * 100, ".1f", unit=" pts"), b.pass_rate - a.pass_rate),
+        ("Mean score", f"{a.mean_score:.3f}", f"{b.mean_score:.3f}",
+         _fmt_delta(b.mean_score - a.mean_score, ".3f"), b.mean_score - a.mean_score),
+        ("Errors", f"{a_err:.0f}", f"{b_err:.0f}",
+         _fmt_delta(b_err - a_err, ".0f", higher_is_better=False), a_err - b_err),
+    ]
+    for key, label in (("latency_ms_p50", "Latency p50"), ("latency_ms_p95", "Latency p95")):
+        x, y = num(am, key), num(bm, key)
+        rows.append((
+            label, f"{x:.0f} ms" if x is not None else "n/a", f"{y:.0f} ms" if y is not None else "n/a",
+            _fmt_delta(diff(x, y), ".0f", higher_is_better=False, unit=" ms"), 0.0,
+        ))
+    rows.append((
+        "Cost", f"${a_cost:.4f}" if a_cost is not None else "n/a",
+        f"${b_cost:.4f}" if b_cost is not None else "n/a",
+        _fmt_delta(diff(a_cost, b_cost), ".4f", higher_is_better=False, prefix="$"),
+        0.0,
+    ))
+    out = []
+    for label, av, bv, delta_html, goodness in rows:
+        cls = " bad" if goodness < -1e-9 else (" good" if goodness > 1e-9 else "")
+        out.append(
+            f"<div class='card{cls}'><div class='label'>{html.escape(label)}</div>"
+            f"<div class='value'>{html.escape(av)} → {html.escape(bv)}</div>"
+            f"<div class='sub'>{delta_html}</div></div>"
+        )
+    return f"<section class='cards'>{''.join(out)}</section>"
+
+
+def _case_diff_rows(baseline: RunExport, candidate: RunExport, diff: dict) -> list[dict]:
+    a_map = {o.case_id: o for o in baseline.outcomes}
+    b_map = {o.case_id: o for o in candidate.outcomes}
+    kind_of: dict[str, str] = {cid: "regression" for cid in diff["regressions"]}
+    kind_of.update({d["case_id"]: "score_drop" for d in diff["score_drops"]})
+    kind_of.update({cid: "improvement" for cid in diff["improvements"]})
+    kind_of.update({cid: "missing" for cid in diff["missing_in_candidate"]})
+    kind_of.update({cid: "new" for cid in diff["new_in_candidate"]})
+    rows = []
+    for cid in set(a_map) | set(b_map):
+        a, b = a_map.get(cid), b_map.get(cid)
+        sa = _case_score(a) if a else None
+        sb = _case_score(b) if b else None
+        rows.append({
+            "case_id": cid,
+            "kind": kind_of.get(cid, "unchanged"),
+            "a": a,
+            "b": b,
+            "delta": sb - sa if sa is not None and sb is not None else None,
+        })
+    rank = {k: i for i, k in enumerate(_DIFF_KINDS)}
+    rows.sort(key=lambda r: (rank[r["kind"]], r["delta"] if r["delta"] is not None else 0.0, r["case_id"]))
+    return rows
+
+
+def _side_cell(o: CaseOutcome | None) -> str:
+    if o is None:
+        return "<td class='num'>—</td><td class='num'>—</td>"
+    status = "error" if o.run.error else ("pass" if o.passed else "fail")
+    return f"<td class='num'>{status}</td><td class='num'>{_case_score(o):.2f}</td>"
+
+
+def _side_output(label: str, o: CaseOutcome | None) -> str:
+    if o is None:
+        return f"<div><div class='flabel'>{html.escape(label)}</div><pre>(not in this run)</pre></div>"
+    text = o.run.output if not o.run.error else f"ERROR: {o.run.error}"
+    badges = " ".join(
+        f"<span class='badge {'pass' if s.passed else 'fail'}'>{html.escape(s.scorer)} {s.score:.2f}</span>"
+        for s in o.scores
+    )
+    return (
+        f"<div><div class='flabel'>{html.escape(label)} {badges}</div>"
+        f"<pre>{html.escape(text or '')}</pre></div>"
+    )
+
+
+def _case_diff_table(rows: list[dict], cases: dict[str, EvalCase]) -> str:
+    body = []
+    for r in rows:
+        case = cases.get(r["case_id"])
+        details = (
+            "<details class='out'><summary>outputs</summary>"
+            + _pre("Input", case.input if case else None)
+            + _pre("Expected", case.expected if case else None)
+            + f"<div class='side'>{_side_output('A', r['a'])}{_side_output('B', r['b'])}</div></details>"
+        )
+        body.append(
+            f"<tr class='{r['kind']}'><td class='kind'>{_DIFF_LABELS[r['kind']]}</td>"
+            f"<td><code>{html.escape(r['case_id'])}</code>{details}</td>"
+            f"{_side_cell(r['a'])}{_side_cell(r['b'])}"
+            f"<td class='num'>{_fmt_delta(r['delta'], '.2f')}</td></tr>"
+        )
+    return (
+        "<table class='diff cases'><thead><tr><th>Change</th><th>Case</th><th>A</th><th>A score</th>"
+        f"<th>B</th><th>B score</th><th>Δ score</th></tr></thead><tbody>{''.join(body)}</tbody></table>"
+    )
+
+
+def _scorer_diff_table(baseline: RunExport, candidate: RunExport) -> str:
+    am, bm = _scorer_means(baseline.outcomes), _scorer_means(candidate.outcomes)
+    rows = []
+    for k in sorted(set(am) | set(bm)):
+        a, b = am.get(k), bm.get(k)
+        rows.append(
+            f"<tr><td>{html.escape(k)}</td>"
+            f"<td class='num'>{'—' if a is None else f'{a:.3f}'}</td>"
+            f"<td class='num'>{'—' if b is None else f'{b:.3f}'}</td>"
+            f"<td class='num'>{_fmt_delta(None if a is None or b is None else b - a, '.3f')}</td></tr>"
+        )
+    return (
+        "<h2>By scorer</h2><table class='diff tags'><thead><tr><th>Scorer</th><th>A mean</th>"
+        f"<th>B mean</th><th>Δ</th></tr></thead><tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _tag_diff_table(baseline: RunExport, candidate: RunExport) -> str:
+    a_stats = {r["tag"]: r for r in _tag_stats(baseline.outcomes, baseline.cases_by_id())}
+    b_stats = {r["tag"]: r for r in _tag_stats(candidate.outcomes, candidate.cases_by_id())}
+
+    def cell(r: dict | None) -> str:
+        return "<td class='num'>—</td>" if r is None else (
+            f"<td class='num'>{r['passed']}/{r['total']} ({r['pass_rate']:.1%})</td>"
+        )
+
+    rows = []
+    for tag in sorted(set(a_stats) | set(b_stats)):
+        a, b = a_stats.get(tag), b_stats.get(tag)
+        delta = None if a is None or b is None else (b["pass_rate"] - a["pass_rate"]) * 100
+        rows.append(
+            f"<tr><td>{html.escape(tag)}</td>{cell(a)}{cell(b)}"
+            f"<td class='num'>{_fmt_delta(delta, '.1f', unit=' pts')}</td></tr>"
+        )
+    return (
+        "<h2>By tag</h2><table class='diff tags'><thead><tr><th>Tag</th><th>A passed</th>"
+        f"<th>B passed</th><th>Δ pass rate</th></tr></thead><tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _run_label(s: EvalRunSummary) -> str:
+    return f"{s.run_id} · {s.adapter}" + (f" / {s.model}" if s.model else "") + f" · {s.suite_name}"
+
+
+def write_compare_report(baseline: RunExport, candidate: RunExport, out_path: Path) -> Path:
+    """Side-by-side HTML diff of two runs: A = ``baseline``, B = ``candidate``.
+
+    Cases are listed regressions first, then score drops, improvements, cases present in only
+    one run, and finally unchanged cases. Classification matches ``ai-eval compare``.
+    """
+    a, b = baseline.summary, candidate.summary
+    diff = compare_exports(baseline, candidate)
+    rows = _case_diff_rows(baseline, candidate, diff)
+    cases = {**baseline.cases_by_id(), **candidate.cases_by_id()}
+    counts = {k: sum(1 for r in rows if r["kind"] == k) for k in _DIFF_KINDS}
+    count_line = " | ".join(f"{_DIFF_LABELS[k]}: {counts[k]}" for k in _DIFF_KINDS)
+    warn = (
+        "<p><b>Note:</b> the runs are from different suites; only cases with matching ids are compared.</p>"
+        if a.suite_name != b.suite_name
+        else ""
+    )
+
+    doc = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Compare {html.escape(a.run_id)} vs {html.escape(b.run_id)}</title>
+  <style>
+{_BASE_CSS}{_COMPARE_CSS}  </style>
+</head>
+<body>
+  <h1>Run comparison</h1>
+  <p><b>A (baseline):</b> {html.escape(_run_label(a))}<br/>
+  <b>B (candidate):</b> {html.escape(_run_label(b))}</p>
+  {warn}
+  {_compare_cards(a, b)}
+  <p class='counts'>{count_line}</p>
+  {_scorer_diff_table(baseline, candidate)}
+  {_tag_diff_table(baseline, candidate)}
+  <h2>Cases</h2>
+  {_case_diff_table(rows, cases)}
+</body>
+</html>
+"""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(doc, encoding="utf-8")
+    return out_path
