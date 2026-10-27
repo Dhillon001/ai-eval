@@ -32,6 +32,74 @@ def _tag_pass_rates(outcomes: list[CaseOutcome], cases: dict[str, EvalCase]) -> 
     return {t: sum(v) / len(v) for t, v in sorted(buckets.items())}
 
 
+def _tag_stats(outcomes: list[CaseOutcome], cases: dict[str, EvalCase]) -> list[dict]:
+    """Per-tag counts, pass rate and mean score; cases without tags fall under ``untagged``."""
+    buckets: dict[str, list[CaseOutcome]] = {}
+    for o in outcomes:
+        case = cases.get(o.case_id)
+        tags = (case.metadata.get("tags") if case else None) or ["untagged"]
+        for t in tags:
+            buckets.setdefault(str(t), []).append(o)
+    rows = []
+    for tag, group in sorted(buckets.items()):
+        passed = sum(1 for o in group if o.passed)
+        rows.append(
+            {
+                "tag": tag,
+                "total": len(group),
+                "passed": passed,
+                "pass_rate": passed / len(group),
+                "mean_score": sum(_case_score(o) for o in group) / len(group),
+                "errors": sum(1 for o in group if o.run.error),
+            }
+        )
+    return rows
+
+
+def _summary_cards(summary: EvalRunSummary) -> str:
+    m = summary.metadata
+    cost = m.get("cost_usd")
+    cards = [
+        ("Pass rate", f"{summary.pass_rate:.1%}", f"{summary.passed}/{summary.total} cases"),
+        ("Mean score", f"{summary.mean_score:.3f}", "across all scorers"),
+        ("Errors", str(m.get("errors", 0)), "adapter or scorer errors"),
+        (
+            "Latency p50 / p95",
+            f"{m.get('latency_ms_p50', 0):.0f} / {m.get('latency_ms_p95', 0):.0f} ms",
+            "per case",
+        ),
+        (
+            "Cost",
+            f"${cost:.4f}" if cost is not None else "n/a",
+            (
+                f"system ${m.get('cost_usd_system') or 0:.4f} + judge ${m.get('cost_usd_judge') or 0:.4f}"
+                if cost is not None
+                else "no priced model"
+            ),
+        ),
+    ]
+    out = []
+    for label, value, sub in cards:
+        cls = " bad" if label == "Errors" and m.get("errors") else ""
+        out.append(
+            f"<div class='card{cls}'><div class='label'>{html.escape(label)}</div>"
+            f"<div class='value'>{html.escape(value)}</div><div class='sub'>{html.escape(sub)}</div></div>"
+        )
+    return f"<section class='cards'>{''.join(out)}</section>"
+
+
+def _tag_table(outcomes: list[CaseOutcome], cases: dict[str, EvalCase]) -> str:
+    rows = "".join(
+        f"<tr><td>{html.escape(r['tag'])}</td><td>{r['passed']}/{r['total']}</td>"
+        f"<td>{r['pass_rate']:.1%}</td><td>{r['mean_score']:.3f}</td><td>{r['errors']}</td></tr>"
+        for r in _tag_stats(outcomes, cases)
+    )
+    return (
+        "<h2>By tag</h2><table class='tags'><thead><tr><th>Tag</th><th>Passed</th><th>Pass rate</th>"
+        f"<th>Mean score</th><th>Errors</th></tr></thead><tbody>{rows}</tbody></table>"
+    )
+
+
 def compare_runs(
     baseline: EvalRunSummary,
     candidate: EvalRunSummary,
@@ -122,12 +190,22 @@ def write_html_report(
     tr.fail {{ background: #fff0f0; }}
     tr.pass {{ background: #f6fff6; }}
     pre {{ white-space: pre-wrap; margin: 0; }}
+    .cards {{ display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 1rem 0 1.5rem; }}
+    .card {{ border: 1px solid #ccc; border-radius: 8px; padding: 0.75rem 1rem; min-width: 10rem; }}
+    .card .label {{ font-size: 0.8rem; color: #555; text-transform: uppercase; letter-spacing: 0.03em; }}
+    .card .value {{ font-size: 1.6rem; font-weight: 600; margin: 0.2rem 0; }}
+    .card .sub {{ font-size: 0.8rem; color: #666; }}
+    .card.bad {{ border-color: #d33; background: #fff0f0; }}
+    table.tags {{ width: auto; margin-bottom: 1.5rem; }}
   </style>
 </head>
 <body>
   <h1>Run {html.escape(summary.run_id)}</h1>
   <p>Suite: {html.escape(summary.suite_name)} | Adapter: {html.escape(summary.adapter)}
-  | Pass: {summary.passed}/{summary.total} ({summary.pass_rate:.1%}) | Mean score: {summary.mean_score:.3f}</p>
+  | Model: {html.escape(summary.model or "-")}</p>
+  {_summary_cards(summary)}
+  {_tag_table(outcomes, cases)}
+  <h2>Cases</h2>
   <table>
     <thead><tr><th>Case</th><th>Status</th><th>Input</th><th>Output</th><th>Scores</th><th>Error</th></tr></thead>
     <tbody>

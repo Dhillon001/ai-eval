@@ -34,7 +34,7 @@ Steps are ticked (`[x]`) in the same commit that completes them.
 - [x] 4. Tests for retries (fake client raising then succeeding), cache hit/miss, cost math; README updates.
 
 ## Tue Oct 27 — Report v2
-- [ ] 1. Core: HTML report summary cards (pass rate, mean score, errors, p50/p95, cost) and per-tag table.
+- [x] 1. Core: HTML report summary cards (pass rate, mean score, errors, p50/p95, cost) and per-tag table.
 - [ ] 2. Core: failures-first ordering, collapsible case details (scores, trace, judge reasoning).
 - [ ] 3. Core: `ai-eval report --compare A B` — side-by-side HTML diff highlighting regressions/improvements.
 - [ ] 4. Tests (HTML contains expected sections, escaping of untrusted output) + README screenshot-free description.
