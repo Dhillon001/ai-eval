@@ -3,16 +3,40 @@
 from types import SimpleNamespace
 
 
+class FakeAPIError(Exception):
+    """Looks like an SDK HTTP error: ``status_code`` plus a ``response`` with headers.
+
+    ``retry_after`` sets a ``Retry-After`` header (seconds); ``0`` lets retry tests run
+    without sleeping through the real backoff.
+    """
+
+    def __init__(self, status_code=500, retry_after=None):
+        super().__init__(f"HTTP {status_code}")
+        self.status_code = status_code
+        headers = {} if retry_after is None else {"retry-after": str(retry_after)}
+        self.response = SimpleNamespace(status_code=status_code, headers=headers)
+
+
+def _maybe_raise(errors):
+    """Pop and raise the next queued exception, if any (a fake that fails, then succeeds)."""
+    if errors:
+        raise errors.pop(0)
+
+
 class FakeOpenAI:
-    def __init__(self, text="ok", fail=False):
+    """``errors``: exceptions raised by the first calls, in order, before answering normally."""
+
+    def __init__(self, text="ok", fail=False, errors=None):
         self.calls = []
         self._text, self._fail = text, fail
+        self._errors = list(errors or [])
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
 
     def _create(self, **kw):
         self.calls.append(kw)
         if self._fail:
             raise RuntimeError("boom")
+        _maybe_raise(self._errors)
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content=self._text))],
             usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5),
@@ -20,13 +44,17 @@ class FakeOpenAI:
 
 
 class FakeAnthropic:
-    def __init__(self, text="ok"):
+    """``errors``: exceptions raised by the first calls, in order, before answering normally."""
+
+    def __init__(self, text="ok", errors=None):
         self.calls = []
         self._text = text
+        self._errors = list(errors or [])
         self.messages = SimpleNamespace(create=self._create)
 
     def _create(self, **kw):
         self.calls.append(kw)
+        _maybe_raise(self._errors)
         return SimpleNamespace(
             content=[SimpleNamespace(type="text", text=self._text)],
             usage=SimpleNamespace(input_tokens=12, output_tokens=7),

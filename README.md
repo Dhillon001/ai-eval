@@ -564,7 +564,9 @@ bad request) fail immediately.
 | backoff | `0.5s × 2^attempt`, randomized to 50–100%, capped at `20s` | built in |
 
 The SDKs' own retries are switched off so attempts are never multiplied, and the number of
-retries used is recorded in each case's trace.
+retries used is recorded in each case's trace as `trace.retries`. A case whose retries run out
+is recorded as an error (`RunResult.error`) rather than aborting the run; a judge whose retries
+run out fails that score with `details.error`.
 
 ### 💾 Judge cache
 
@@ -672,6 +674,12 @@ pip install -e ".[dev]"
 python -m pytest -q          # unit tests use fake SDK clients and httpx.MockTransport — no network, no keys
 ai-eval run --suite configs/example_suite.yaml --adapter mock --min-pass-rate 1.0
 ```
+
+Provider code is tested against the fakes in [`tests/fakes.py`](tests/fakes.py):
+`FakeOpenAI` / `FakeAnthropic` take `errors=[...]` to fail transiently before answering, and
+`FakeAPIError(status, retry_after=0)` mimics an SDK HTTP error, so retry tests run without
+sleeping. Pricing and cost math (`tests/test_pricing.py`) use round-number prices so expected
+costs are exact.
 
 ## 🗺️ Roadmap
 
