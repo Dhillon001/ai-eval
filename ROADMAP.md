@@ -37,7 +37,7 @@ Steps are ticked (`[x]`) in the same commit that completes them.
 - [x] 1. Core: HTML report summary cards (pass rate, mean score, errors, p50/p95, cost) and per-tag table.
 - [x] 2. Core: failures-first ordering, collapsible case details (scores, trace, judge reasoning).
 - [x] 3. Core: `ai-eval report --compare A B` — side-by-side HTML diff highlighting regressions/improvements.
-- [ ] 4. Tests (HTML contains expected sections, escaping of untrusted output) + README screenshot-free description.
+- [x] 4. Tests (HTML contains expected sections, escaping of untrusted output) + README screenshot-free description.
 
 ## Wed Oct 28 — Benchmark harness and v0.2.0
 - [ ] 1. Data: grow `datasets/examples/rag_v1.jsonl` to ~30 cases (answerable, unanswerable/abstain, conflicting context, multi-hop), tagged.

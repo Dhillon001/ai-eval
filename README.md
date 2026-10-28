@@ -18,6 +18,7 @@ datasets in, scored runs out, regressions caught before they merge.
 [Scorers](#-scorers--how-its-graded) •
 [RAG](#-evaluating-retrieval-vs-generation) •
 [Agents](#-evaluating-agents) •
+[Reports](#-html-reports) •
 [CI gate](#-ci-regression-gate) •
 [Cost & reliability](#-reliability-and-cost)
 
@@ -449,6 +450,41 @@ to tell **"right tools, wrong answer"** from **"right answer, wrong tools"**.
 
 ---
 
+## 📊 HTML reports
+
+Every `run` writes `.ai-eval/reports/<run-id>.html` (rebuild it any time with
+`ai-eval report --run-id <id>`). It is a single self-contained file — no JavaScript, no
+external assets — so it can be uploaded as a CI artifact or attached to a PR. Top to bottom:
+
+- **Summary cards** — pass rate (`passed/total`), mean score, errors (outlined red when non-zero),
+  latency p50 / p95, and cost split into system vs. judge (or "no priced model").
+- **By tag** — passed/total, pass rate, mean score and errors per `metadata.tags` value; untagged
+  cases are grouped under `untagged`.
+- **Cases** — errors first, then failures from lowest score up, then passes. Failing cases are
+  expanded; passing ones are collapsed. Each case shows its input, context, expected answer,
+  output, a per-scorer table (score, pass/fail, judge reasoning, scorer details) and the raw
+  trace (retrieved ids, tool calls) under a toggle.
+
+`ai-eval report --compare A B` writes a side-by-side diff of two runs instead. `A` (baseline)
+and `B` (candidate) can each be a local run id or a run JSON file from `--save-baseline`:
+
+```bash
+ai-eval report --compare main.json pr.json --out compare.html
+# Regressions: 1 | score drops: 0 | improvements: 2 | pass rate 83.3% -> 91.7%
+```
+
+The comparison page shows A → B cards for each headline metric with green/red deltas, per-scorer
+mean and per-tag pass-rate tables, and every case labelled **Regression**, **Score drop**,
+**Improvement**, **Missing in B**, **New in B** or **Unchanged** — in that order, using the same
+rules as `ai-eval compare` — with both outputs side by side. It warns when the runs come from
+different suites.
+
+> Model output, dataset fields, judge reasoning and traces are untrusted text: everything is
+> HTML-escaped, so a response containing `<script>` shows up as text rather than running.
+> `tests/test_report_html.py` checks this for both report types.
+
+---
+
 ## 🔁 Comparing runs
 
 `compare` diffs two runs and reports:
@@ -636,7 +672,7 @@ Cost: $0.0123 (system $0.0081 + judge $0.0042)
 |---|---|---|
 | `ai-eval run` | run a suite, store results, write an HTML report | `--suite`, `--adapter`, `--model`, `-j/--concurrency`, `--min-pass-rate`, `--save-baseline`, `--no-cache` |
 | `ai-eval list-runs` | table of recent runs | `--limit` |
-| `ai-eval report` | (re)build the HTML report for a run | `--run-id` |
+| `ai-eval report` | (re)build a run's HTML report, or diff two runs side by side | `--run-id`, `--compare A B`, `--out` |
 | `ai-eval compare` | diff two runs; exit 1 on regressions | `--baseline` / `--baseline-file`, `--candidate` / `--candidate-file`, `--fail-on-score-drop` |
 
 `run` exits **1** when the pass rate is below `--min-pass-rate`, which makes it a one-line CI check:
@@ -684,8 +720,7 @@ costs are exact.
 ## 🗺️ Roadmap
 
 v0.2 is being built one shippable step at a time — see [ROADMAP.md](ROADMAP.md). Coming up next:
-richer HTML reports (summary cards, per-tag tables, side-by-side run diffs) and a `bench`
-command for comparing several models on one suite.
+a `bench` command for comparing several models on one suite, and the v0.2.0 release.
 
 <div align="center">
 <sub>Built with ❤️ by <a href="https://github.com/Dhillon001">Harsharandeep Dhillon</a></sub>
