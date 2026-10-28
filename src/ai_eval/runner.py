@@ -97,7 +97,12 @@ def run_suite(
     cases = load_cases(Path(suite.dataset))
 
     adapter_cfg = dict(suite.adapter)
-    name = adapter_name or adapter_cfg.pop("type", "mock")
+    suite_adapter = adapter_cfg.pop("type", "mock")
+    name = adapter_name or suite_adapter
+    if name != suite_adapter:
+        # Options in the suite belong to its own adapter (e.g. an http url, a mock template);
+        # don't leak them into a different adapter chosen on the command line.
+        adapter_cfg = {}
     if adapter_options:
         adapter_cfg.update(adapter_options)
     adapter = build_adapter(name, adapter_cfg)

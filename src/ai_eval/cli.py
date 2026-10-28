@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
+from ai_eval.bench import BENCH_COLUMNS, bench_cells, format_markdown, parse_system_spec, run_bench
 from ai_eval.models import RunExport
 from ai_eval.report import compare_exports, generate_report, write_compare_report
 from ai_eval.runner import run_suite
@@ -90,6 +91,65 @@ def run(
     if summary.pass_rate < min_pass_rate:
         console.print(f"[red]Below min pass rate {min_pass_rate:.1%}[/red]")
         raise typer.Exit(code=1)
+
+
+@app.command()
+def bench(
+    suite: Path = typer.Option(..., "--suite", help="Path to suite YAML"),
+    adapters: list[str] = typer.Option(
+        ..., "--adapter", metavar="ADAPTER[:MODEL]",
+        help="System to benchmark, e.g. mock, openai:gpt-4o-mini, anthropic:claude-sonnet-4-5. Repeat for each system.",
+    ),
+    concurrency: int = typer.Option(1, "--concurrency", "-j", min=1, help="Cases to run in parallel per system"),
+    markdown: bool = typer.Option(False, "--markdown", help="Print the comparison as a markdown table"),
+    out: Optional[Path] = typer.Option(None, "--out", help="Also write the markdown table to PATH"),
+    no_cache: bool = typer.Option(
+        False, "--no-cache", help="Bypass the judge cache in .ai-eval/cache/ (no reads or writes)"
+    ),
+):
+    """Run one suite against several systems and print a comparison table (best first)."""
+    root = _project_root()
+    suite_path = suite if suite.is_absolute() else root / suite
+    try:
+        systems = [parse_system_spec(a) for a in adapters]
+    except ValueError as e:
+        raise typer.BadParameter(str(e), param_hint="--adapter") from e
+
+    with Progress(
+        SpinnerColumn(), TextColumn("{task.description}"), BarColumn(), MofNCompleteColumn(),
+        console=console, transient=True,
+    ) as progress:
+        task = progress.add_task("Benchmarking", total=None)
+        try:
+            result = run_bench(
+                suite_path=suite_path,
+                project_root=root,
+                systems=systems,
+                concurrency=concurrency,
+                use_cache=not no_cache,
+                on_case_done=lambda _o: progress.advance(task),
+                on_system_start=lambda s: progress.update(task, description=f"Benchmarking {s.label}"),
+            )
+        except (ValueError, TypeError) as e:
+            # e.g. `--adapter http` on a suite that doesn't configure an http url
+            raise typer.BadParameter(f"{type(e).__name__}: {e}", param_hint="--adapter") from e
+
+    md = format_markdown(result)
+    if markdown:
+        typer.echo(md, nl=False)
+    else:
+        table = Table(title=f"Benchmark: {result.suite_name}")
+        for i, col in enumerate(BENCH_COLUMNS):
+            edge = i in (0, len(BENCH_COLUMNS) - 1)
+            table.add_column(col, justify="left" if edge else "right", no_wrap=edge)
+        for row in result.ranked():
+            table.add_row(*bench_cells(row))
+        console.print(table)
+    if out:
+        dest = out if out.is_absolute() else root / out
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(md, encoding="utf-8")
+        console.print(f"Wrote {dest}")
 
 
 @app.command("list-runs")

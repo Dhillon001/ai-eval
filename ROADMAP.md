@@ -41,6 +41,6 @@ Steps are ticked (`[x]`) in the same commit that completes them.
 
 ## Wed Oct 28 — Benchmark harness and v0.2.0
 - [x] 1. Data: grow `datasets/examples/rag_v1.jsonl` to ~30 cases (answerable, unanswerable/abstain, conflicting context, multi-hop), tagged.
-- [ ] 2. Core: `ai-eval bench --suite S --adapter A:model --adapter B:model` — runs several systems and prints a comparison table (markdown output option).
+- [x] 2. Core: `ai-eval bench --suite S --adapter A:model --adapter B:model` — runs several systems and prints a comparison table (markdown output option).
 - [ ] 3. Tests for `bench` with mock adapters; `CHANGELOG.md` for v0.2.0; version bump in `pyproject.toml` and `__init__.py`.
 - [ ] 4. Release: README "Benchmarks" section (how to run; results table to be filled from a live run with real API keys), git tag `v0.2.0` pushed.
