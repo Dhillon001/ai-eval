@@ -57,6 +57,7 @@ work?" into a repeatable, versioned test run:
 | ♻️ | **Resilient** | Exponential backoff + jitter on 429/5xx/timeouts |
 | 💾 | **Judge cache** | Identical judge prompts are never paid for twice |
 | 💸 | **Cost tracking** | Per-model price table, `cost_usd` on every run |
+| 🏁 | **Benchmarks** | `ai-eval bench` ranks several models on one suite |
 | ⚡ | **Parallel** | `-j 8` runs cases concurrently |
 
 ---
@@ -583,6 +584,71 @@ flowchart LR
 
 ---
 
+## 🏁 Benchmarks
+
+`ai-eval bench` runs **one suite against several systems** and prints a table ranked by pass
+rate, then mean score. Name each system as `ADAPTER[:MODEL]` and repeat `--adapter`:
+
+```bash
+# Offline smoke test — no keys needed
+ai-eval bench --suite configs/example_suite.yaml --adapter mock --adapter mock:mock-2
+
+# Real models on the 30-case RAG suite, written out as markdown
+export OPENAI_API_KEY=sk-... ANTHROPIC_API_KEY=sk-ant-...
+ai-eval bench --suite configs/rag_suite.yaml \
+  --adapter anthropic:claude-haiku-5-5 \
+  --adapter openai:gpt-4o-mini \
+  --adapter openai:gpt-4o \
+  -j 8 --markdown --out benchmarks.md
+```
+
+```text
+**Suite:** `example-chat-v1`
+
+| System | Pass rate | Passed | Mean score | Errors | p50 ms | p95 ms | Cost (USD) | Run ID |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| `mock` | 100.0% | 3/3 | 1.000 | 0 | 1 | 1 | n/a | `c5c223fedbfb` |
+| `mock:mock-2` | 100.0% | 3/3 | 1.000 | 0 | 1 | 1 | n/a | `6476d0eea4e0` |
+```
+
+| option | what it does |
+|---|---|
+| `--adapter ADAPTER[:MODEL]` | a system to benchmark (repeat; only the first `:` splits, so `llama3:8b` works) |
+| `-j / --concurrency` | cases run in parallel **per system** (systems run one after another) |
+| `--markdown` | print a GitHub-flavoured table instead of the terminal table |
+| `--out PATH` | also write the markdown table to `PATH` |
+| `--no-cache` | bypass the judge cache |
+
+Every system's run is stored like a normal `ai-eval run`, so the run ids in the table work
+with `ai-eval compare` and `ai-eval report --compare A B` to see *which cases* separate two
+systems, not just the headline numbers.
+
+**Keeping it fair:**
+
+- All systems are graded by the **same scorers and judge** from the suite YAML (for
+  `rag_suite.yaml`: checklist + `claude-haiku-5-5` faithfulness), so scores are comparable.
+  Be aware a judge may favour its own model family.
+- Adapter options in the suite (such as `system_prompt`) only apply to systems using the
+  **suite's own adapter type**. A system on a different adapter starts with default options, so
+  to compare providers on equal prompts, give each its own suite copy or keep prompts in the
+  dataset.
+- Use `-j` and the same suite file for every system; costs come from the
+  [price table](#-cost-tracking), so check it before quoting dollar figures.
+
+### Results — `rag-v1` (30 cases)
+
+> [!NOTE]
+> These numbers have to come from a live run with real API keys and haven't been filled in yet.
+> Regenerate them with the `rag_suite.yaml` command above and paste `benchmarks.md` here.
+
+| System | Pass rate | Passed | Mean score | Errors | p50 ms | p95 ms | Cost (USD) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `anthropic:claude-haiku-5-5` | — | —/30 | — | — | — | — | — |
+| `openai:gpt-4o-mini` | — | —/30 | — | — | — | — | — |
+| `openai:gpt-4o` | — | —/30 | — | — | — | — | — |
+
+---
+
 ## 💸 Reliability and cost
 
 Real API runs are slow, flaky and cost money. ai-eval handles all three.
@@ -671,6 +737,7 @@ Cost: $0.0123 (system $0.0081 + judge $0.0042)
 | command | what it does | key options |
 |---|---|---|
 | `ai-eval run` | run a suite, store results, write an HTML report | `--suite`, `--adapter`, `--model`, `-j/--concurrency`, `--min-pass-rate`, `--save-baseline`, `--no-cache` |
+| `ai-eval bench` | run one suite against several systems, ranked comparison table | `--suite`, `--adapter ADAPTER[:MODEL]` (repeat), `-j`, `--markdown`, `--out`, `--no-cache` |
 | `ai-eval list-runs` | table of recent runs | `--limit` |
 | `ai-eval report` | (re)build a run's HTML report, or diff two runs side by side | `--run-id`, `--compare A B`, `--out` |
 | `ai-eval compare` | diff two runs; exit 1 on regressions | `--baseline` / `--baseline-file`, `--candidate` / `--candidate-file`, `--fail-on-score-drop` |
@@ -719,8 +786,8 @@ costs are exact.
 
 ## 🗺️ Roadmap
 
-v0.2 is being built one shippable step at a time — see [ROADMAP.md](ROADMAP.md). Coming up next:
-a `bench` command for comparing several models on one suite, and the v0.2.0 release.
+v0.2.0 is released — see [CHANGELOG.md](CHANGELOG.md) for what's in it and
+[ROADMAP.md](ROADMAP.md) for how it was built, one shippable step at a time.
 
 <div align="center">
 <sub>Built with ❤️ by <a href="https://github.com/Dhillon001">Harsharandeep Dhillon</a></sub>
