@@ -54,12 +54,12 @@ Tests never hit real networks or API keys — use fakes in `tests/fakes.py` / in
 
 ## Distribution and polish
 - [ ] 39. Packaging: complete PyPI metadata (classifiers, URLs, license), `python -m build` + `twine check` job in CI.
-- [ ] 40. Release workflow: publish to PyPI via trusted publishing on `v*` tags (documented one-time PyPI setup for the owner).
+- [ ] 40. Release workflow: publish to PyPI via trusted publishing as a `publish` job in `.github/workflows/release-tag.yml` that runs `needs: tag` when `needs.tag.outputs.created == 'true'` (tags pushed by GITHUB_TOKEN don't trigger other workflows); document the one-time PyPI setup for the owner.
 - [ ] 41. Core: `ai-eval trends --suite S` — pass rate, mean score and cost across stored runs, as a table and an HTML page.
 - [ ] 42. Tests for trends.
 - [ ] 43. Core: `ai-eval init` — scaffold a suite YAML, dataset and CI workflow in a new project; tests.
 - [ ] 44. Docs site: mkdocs-material from README sections + GitHub Pages deploy workflow.
-- [ ] 45. Release v0.3.0: CHANGELOG, version bump in pyproject and `__init__`, README "What's new", git tag `v0.3.0` pushed.
+- [ ] 45. Release v0.3.0: CHANGELOG, version bump in pyproject and `__init__`, README "What's new". The `v0.3.0` tag and GitHub Release are created automatically by `release-tag.yml` when the version bump lands on main — do not tag manually.
 
 ---
 
