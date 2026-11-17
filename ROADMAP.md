@@ -5,7 +5,7 @@ on its own and is ticked (`[x]`) in the same commit that completes it.
 Tests never hit real networks or API keys — use fakes in `tests/fakes.py` / in-repo fake servers.
 
 ## MCP server evals
-- [ ] 1. Core: `ai_eval/mcp_client.py` — connect to a stdio MCP server (optional `mcp` extra in pyproject), list tools, call a tool, clean shutdown; server command/args/env configured in suite YAML.
+- [x] 1. Core: `ai_eval/mcp_client.py` — connect to a stdio MCP server (optional `mcp` extra in pyproject), list tools, call a tool, clean shutdown; server command/args/env configured in suite YAML.
 - [ ] 2. Tests: a tiny in-repo fake stdio MCP server (`tests/fixtures/fake_mcp_server.py`) exercised for list/call/error/timeout.
 - [ ] 3. Core: agent loop — expose MCP tools to Claude (Anthropic tool use), run until final answer or `max_steps`; record `trace["tool_calls"]` (name, args, result, error) and the final answer as output.
 - [ ] 4. Tests: agent loop driven by a fake Anthropic client that emits tool_use blocks (single call, multi-step, tool error, max_steps hit).
