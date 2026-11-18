@@ -225,7 +225,9 @@ class MCPClient:
     async def _serve(self, params: Any, stdio_client: Any, mcp: Any) -> None:
         self._stop = asyncio.Event()
         async with stdio_client(params, errlog=self._errlog) as (read, write):
-            async with mcp.ClientSession(read, write, read_timeout_seconds=self.config.call_timeout) as session:
+            # The session-wide read timeout bounds the initialize handshake (startup_timeout);
+            # list/call requests are bounded by call_timeout in _submit and call_tool.
+            async with mcp.ClientSession(read, write, read_timeout_seconds=self.config.startup_timeout) as session:
                 await session.initialize()
                 self._session = session
                 self._ready.set_result(None)
