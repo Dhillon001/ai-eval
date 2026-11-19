@@ -8,7 +8,7 @@ Tests never hit real networks or API keys — use fakes in `tests/fakes.py` / in
 - [x] 1. Core: `ai_eval/mcp_client.py` — connect to a stdio MCP server (optional `mcp` extra in pyproject), list tools, call a tool, clean shutdown; server command/args/env configured in suite YAML.
 - [x] 2. Tests: a tiny in-repo fake stdio MCP server (`tests/fixtures/fake_mcp_server.py`) exercised for list/call/error/timeout.
 - [x] 3. Core: agent loop — expose MCP tools to Claude (Anthropic tool use), run until final answer or `max_steps`; record `trace["tool_calls"]` (name, args, result, error) and the final answer as output.
-- [ ] 4. Tests: agent loop driven by a fake Anthropic client that emits tool_use blocks (single call, multi-step, tool error, max_steps hit).
+- [x] 4. Tests: agent loop driven by a fake Anthropic client that emits tool_use blocks (single call, multi-step, tool error, max_steps hit).
 - [ ] 5. Wiring: register `mcp` adapter; `examples/mcp_inventory_server.py` (toy parts-inventory MCP server); `configs/mcp_suite.yaml` + 8-case dataset with `expected_tools`.
 - [ ] 6. Core: `tool_use` scorer — tool precision/recall, invalid-argument rate, steps vs. optimal (efficiency), with pass thresholds.
 - [ ] 7. Tests for the `tool_use` scorer.

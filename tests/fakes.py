@@ -83,3 +83,76 @@ class FakeHTTPService:
         if self._text is not None:
             return httpx.Response(self._status, text=self._text)
         return httpx.Response(self._status, json=self._json)
+
+
+def text_block(text):
+    return SimpleNamespace(type="text", text=text)
+
+
+def tool_use_block(name, input=None, id=None):
+    return SimpleNamespace(type="tool_use", id=id or f"toolu_{name}", name=name, input=input)
+
+
+class FakeAnthropicAgent:
+    """Scripted Anthropic client for agent-loop tests.
+
+    ``turns`` is a list of responses, one per ``messages.create`` call; each is a list of content
+    blocks (``text_block`` / ``tool_use_block``), a plain string (a text-only final answer), or an
+    exception to raise. When the script runs out, ``repeat_last=True`` keeps returning the last
+    turn (for max_steps tests); otherwise extra calls fail the test loudly.
+    """
+
+    def __init__(self, turns, repeat_last=False, input_tokens=20, output_tokens=8):
+        self.calls = []
+        self._turns = list(turns)
+        self._repeat_last = repeat_last
+        self._usage = SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
+        self.messages = SimpleNamespace(create=self._create)
+
+    def _create(self, **kw):
+        self.calls.append(kw)
+        idx = len(self.calls) - 1
+        if idx >= len(self._turns):
+            if not (self._repeat_last and self._turns):
+                raise AssertionError(f"FakeAnthropicAgent: unexpected call #{idx + 1}")
+            idx = len(self._turns) - 1
+        turn = self._turns[idx]
+        if isinstance(turn, BaseException):
+            raise turn
+        blocks = [text_block(turn)] if isinstance(turn, str) else list(turn)
+        return SimpleNamespace(content=blocks, usage=self._usage)
+
+
+class FakeToolExecutor:
+    """In-memory stand-in for ``MCPClient``: ``tools`` maps name -> callable(**args).
+
+    A callable may return a string (success), a ``(text, True)`` tuple (tool-reported error), or
+    raise (transport-style failure). ``calls`` records ``(name, args)`` in order.
+    """
+
+    def __init__(self, tools, descriptions=None, schemas=None):
+        self.tools = dict(tools)
+        self.descriptions = descriptions or {}
+        self.schemas = schemas or {}
+        self.calls = []
+
+    def list_tools(self):
+        from ai_eval.mcp_client import MCPTool
+
+        return [
+            MCPTool(name=n, description=self.descriptions.get(n, ""), input_schema=self.schemas.get(n, {}))
+            for n in self.tools
+        ]
+
+    def call_tool(self, name, arguments=None):
+        from ai_eval.mcp_client import MCPToolResult
+
+        args = dict(arguments or {})
+        self.calls.append((name, args))
+        if name not in self.tools:
+            return MCPToolResult(text=f"Unknown tool: {name}", is_error=True)
+        out = self.tools[name](**args)
+        if isinstance(out, tuple):
+            text, is_error = out
+            return MCPToolResult(text=text, is_error=is_error)
+        return MCPToolResult(text=str(out))
