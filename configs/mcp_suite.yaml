@@ -1,0 +1,22 @@
+name: mcp-inventory-v1
+description: Claude answers parts-inventory questions using the tools of a local stdio MCP server; tool calls are scored against expected_tools
+dataset: datasets/examples/mcp_inventory_v1.jsonl
+adapter:
+  type: mcp                # needs ANTHROPIC_API_KEY and the mcp extra: pip install -e ".[mcp,anthropic]"
+  model: claude-haiku-5-5
+  max_steps: 6
+  system_prompt: >-
+    You are a parts-inventory assistant. Use the inventory tools to look up parts and stock.
+    Always check stock before reserving a part. If a tool reports an error, explain it plainly.
+    Reply with a concise final answer.
+  server:
+    command: python        # resolves to the running interpreter
+    args: [examples/mcp_inventory_server.py]
+    cwd: .                 # relative to the project root
+    startup_timeout: 30
+    call_timeout: 15
+# Offline: `ai-eval run --suite configs/mcp_suite.yaml --adapter mock` replays metadata.mock_tool_calls.
+scorers:
+  - type: trajectory
+    mode: subset           # every expected call must happen with the expected args; extras allowed
+    match_args: true

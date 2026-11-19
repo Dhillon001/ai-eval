@@ -105,7 +105,12 @@ def run_suite(
         adapter_cfg = {}
     if adapter_options:
         adapter_cfg.update(adapter_options)
-    adapter = build_adapter(name, adapter_cfg)
+    build_cfg = dict(adapter_cfg)
+    if name == "mcp":
+        # Relative server paths (cwd) resolve against the project root, like the dataset path.
+        # Kept out of adapter_cfg so the stored config hash stays machine-independent.
+        build_cfg.setdefault("root", str(project_root))
+    adapter = build_adapter(name, build_cfg)
     prices = PriceTable.from_config(suite.pricing)
 
     if use_cache and cache is None:
@@ -118,11 +123,14 @@ def run_suite(
             on_case_done(outcome)
         return outcome
 
-    if concurrency <= 1:
-        outcomes = [_one(c) for c in cases]
-    else:
-        with ThreadPoolExecutor(max_workers=concurrency) as pool:
-            outcomes = list(pool.map(_one, cases))  # map preserves dataset order
+    try:
+        if concurrency <= 1:
+            outcomes = [_one(c) for c in cases]
+        else:
+            with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                outcomes = list(pool.map(_one, cases))  # map preserves dataset order
+    finally:
+        adapter.close()
 
     passed = sum(1 for o in outcomes if o.passed)
     total = len(outcomes)

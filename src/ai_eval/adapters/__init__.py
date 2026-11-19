@@ -5,9 +5,10 @@ from typing import Any
 from ai_eval.adapters.base import SystemAdapter
 from ai_eval.adapters.chat_adapter import AnthropicAdapter, OpenAIAdapter
 from ai_eval.adapters.http import HTTPAdapter
+from ai_eval.adapters.mcp import MCP_OPTIONS, MCPAdapter
 from ai_eval.adapters.mock import MockAdapter
 
-ADAPTERS = ("mock", "openai", "anthropic", "http")
+ADAPTERS = ("mock", "openai", "anthropic", "http", "mcp")
 
 _HTTP_OPTIONS = ("url", "body_template", "response_path", "headers", "timeout", "method", "trace_path")
 
@@ -29,4 +30,12 @@ def build_adapter(name: str, options: dict[str, Any] | None = None) -> SystemAda
                 f"Allowed: {', '.join(_HTTP_OPTIONS)}."
             )
         return HTTPAdapter(**options)
+    if name == "mcp":
+        unknown = sorted(set(options) - set(MCP_OPTIONS))
+        if unknown:
+            raise ValueError(
+                f"Unknown option(s) for mcp adapter: {', '.join(unknown)}. "
+                f"Allowed: {', '.join(MCP_OPTIONS)}."
+            )
+        return MCPAdapter(**options)
     raise ValueError(f"Unknown adapter: {name}. Use one of {', '.join(ADAPTERS)}.")

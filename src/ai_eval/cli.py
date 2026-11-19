@@ -27,8 +27,8 @@ def _project_root() -> Path:
 @app.command()
 def run(
     suite: Path = typer.Option(..., "--suite", help="Path to suite YAML"),
-    adapter: Optional[str] = typer.Option(None, "--adapter", help="Override adapter: mock, openai, anthropic, http"),
-    model: Optional[str] = typer.Option(None, "--model", help="Model name for the openai/anthropic adapter"),
+    adapter: Optional[str] = typer.Option(None, "--adapter", help="Override adapter: mock, openai, anthropic, http, mcp"),
+    model: Optional[str] = typer.Option(None, "--model", help="Model name for the openai/anthropic/mcp adapter"),
     concurrency: int = typer.Option(1, "--concurrency", "-j", min=1, help="Cases to run in parallel"),
     min_pass_rate: float = typer.Option(0.0, "--min-pass-rate", help="Exit 1 if pass rate below this"),
     save_baseline: Optional[Path] = typer.Option(

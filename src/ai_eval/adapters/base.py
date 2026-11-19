@@ -11,3 +11,6 @@ class SystemAdapter(ABC):
     @abstractmethod
     def run(self, case: EvalCase) -> RunResult:
         ...
+
+    def close(self) -> None:
+        """Release resources (e.g. a spawned server). Called by the runner after the last case."""
