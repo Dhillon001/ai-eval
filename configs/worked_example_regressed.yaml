@@ -1,0 +1,16 @@
+name: shop-support-rag-v1
+description: Same suite after a bad re-chunk - two cases now retrieve the wrong documents
+dataset: datasets/examples/worked_example_regressed.jsonl
+adapter:
+  type: mock
+  template: "Acme Support: Items can be returned within 30 days of delivery. Standard shipping takes 3-5 business days. (You asked: {input})"
+scorers:
+  - type: checklist
+  - type: retrieval
+    metric: recall@3
+  - type: retrieval
+    metric: mrr
+    threshold: 0.5
+  - type: trajectory
+    mode: subset
+    match_args: true
