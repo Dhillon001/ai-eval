@@ -20,3 +20,8 @@ scorers:
   - type: trajectory
     mode: subset           # every expected call must happen with the expected args; extras allowed
     match_args: true
+  - type: tool_use
+    match_args: true
+    min_recall: 1.0        # every expected call made
+    max_invalid_arg_rate: 0.0
+    min_efficiency: 0.5    # at most twice the optimal number of calls

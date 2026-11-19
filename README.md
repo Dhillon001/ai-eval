@@ -73,6 +73,7 @@ flowchart LR
 | `faithfulness` | every claim is backed by the retrieved documents | no made-up facts |
 | `retrieval` | the right documents came back, ranked high | see below |
 | `trajectory` | an agent called the right tools | looked up the order before refunding |
+| `tool_use` | an agent used tools accurately and efficiently (precision, recall, invalid args, extra calls) | no malformed or wasted calls when checking stock |
 
 A case passes only if **every** scorer passes.
 

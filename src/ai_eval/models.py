@@ -15,7 +15,9 @@ class EvalCase(BaseModel):
     - ``judge_criteria``: grading rubric for the ``llm_judge`` scorer.
     - ``expected_doc_ids``: relevant doc ids for the ``retrieval`` scorer.
     - ``expected_tools``: expected agent tool calls (tool names or ``{name, args}``) for the
-      ``trajectory`` scorer.
+      ``trajectory`` and ``tool_use`` scorers.
+    - ``optimal_steps``: the minimum number of tool calls needed, for ``tool_use`` efficiency
+      (defaults to the number of ``expected_tools``).
     - ``mock_retrieved_ids`` / ``mock_tool_calls``: emitted into the trace by the ``mock``
       adapter so retrieval and agent suites run offline.
     """
