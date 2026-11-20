@@ -127,7 +127,8 @@ class FakeToolExecutor:
     """In-memory stand-in for ``MCPClient``: ``tools`` maps name -> callable(**args).
 
     A callable may return a string (success), a ``(text, True)`` tuple (tool-reported error), or
-    raise (transport-style failure). ``calls`` records ``(name, args)`` in order.
+    raise (transport-style failure). ``calls`` records ``(name, args)`` in order and
+    ``timeouts`` the ``timeout`` passed with each call (``None`` when not given).
     """
 
     def __init__(self, tools, descriptions=None, schemas=None):
@@ -135,6 +136,7 @@ class FakeToolExecutor:
         self.descriptions = descriptions or {}
         self.schemas = schemas or {}
         self.calls = []
+        self.timeouts = []
 
     def list_tools(self):
         from ai_eval.mcp_client import MCPTool
@@ -144,11 +146,12 @@ class FakeToolExecutor:
             for n in self.tools
         ]
 
-    def call_tool(self, name, arguments=None):
+    def call_tool(self, name, arguments=None, timeout=None):
         from ai_eval.mcp_client import MCPToolResult
 
         args = dict(arguments or {})
         self.calls.append((name, args))
+        self.timeouts.append(timeout)
         if name not in self.tools:
             return MCPToolResult(text=f"Unknown tool: {name}", is_error=True)
         out = self.tools[name](**args)

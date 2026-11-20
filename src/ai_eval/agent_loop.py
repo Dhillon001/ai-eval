@@ -12,16 +12,23 @@ Every tool call is recorded as ``{"name", "args", "result", "error"}`` so it can
     with MCPClient(server_config) as tools:
         agent = run_anthropic_agent(client, tools, model="claude-haiku-5-5", user="How many M3 bolts?")
     result = agent.to_run_result(case.id)
+
+A :class:`ToolPolicy` limits what the agent may do: an allowlist and/or denylist of tool names
+(exact names or ``fnmatch`` globs such as ``delete_*``) and a per-call timeout. Disallowed tools
+are never offered to the model; if it calls one anyway the call is not executed, is recorded with
+``blocked=True`` and an error, and the error is sent back to the model.
 """
 
 from __future__ import annotations
 
+import inspect
 import json
 import time
 from collections.abc import Callable
+from fnmatch import fnmatchcase
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ai_eval.llm import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY, call_with_retries
 from ai_eval.mcp_client import MCPTool, MCPToolResult
@@ -43,15 +50,56 @@ class ToolExecutor(Protocol):
     def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> MCPToolResult: ...
 
 
+class ToolPolicy(BaseModel):
+    """Safety limits for an agent run.
+
+    - ``allowed_tools``: if set, only tools matching one of these names/globs may be called.
+    - ``denied_tools``: tools matching any of these names/globs may never be called (deny wins
+      over allow).
+    - ``tool_timeout``: per-call timeout in seconds, passed to the executor's ``call_tool``
+      (``MCPClient`` enforces it; it overrides the server's ``call_timeout``).
+    """
+
+    allowed_tools: list[str] | None = None
+    denied_tools: list[str] = Field(default_factory=list)
+    tool_timeout: float | None = Field(default=None, gt=0)
+
+    @field_validator("allowed_tools", "denied_tools", mode="before")
+    @classmethod
+    def _names(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            raise ValueError("must be a list of tool names, not a string")
+        if v is not None and any(not isinstance(n, str) or not n.strip() for n in v):
+            raise ValueError("tool names must be non-empty strings")
+        return v
+
+    def denial_reason(self, name: str) -> str | None:
+        """Why ``name`` may not be called, or ``None`` if it is allowed."""
+        if any(fnmatchcase(name, pat) for pat in self.denied_tools):
+            return f"tool {name!r} is denied by the tool policy"
+        if self.allowed_tools is not None and not any(fnmatchcase(name, pat) for pat in self.allowed_tools):
+            return f"tool {name!r} is not in the allowed tools"
+        return None
+
+    def is_allowed(self, name: str) -> bool:
+        return self.denial_reason(name) is None
+
+
 class ToolCallRecord(BaseModel):
-    """One executed tool call. ``error`` is set for tool-reported failures and transport errors."""
+    """One requested tool call. ``error`` is set for tool-reported failures, transport errors and
+    calls blocked by the :class:`ToolPolicy` (which also set ``blocked=True`` and are not run)."""
 
     name: str
     args: dict[str, Any] = Field(default_factory=dict)
     result: str | None = None
     error: str | None = None
+    blocked: bool = False
     step: int = 0
     id: str | None = None
+
+    def to_trace(self) -> dict[str, Any]:
+        """Trace form: no provider id, and ``blocked`` only on blocked calls."""
+        return self.model_dump(exclude={"id"} if self.blocked else {"id", "blocked"})
 
 
 class AgentRun(BaseModel):
@@ -74,7 +122,7 @@ class AgentRun(BaseModel):
             trace={
                 "provider": self.provider,
                 "model": self.model,
-                "tool_calls": [c.model_dump(exclude={"id"}) for c in self.tool_calls],
+                "tool_calls": [c.to_trace() for c in self.tool_calls],
                 "steps": self.steps,
                 "stop_reason": self.stop_reason,
                 "retries": self.retries,
@@ -138,10 +186,25 @@ def _add(total: int | None, value: Any) -> int | None:
     return total
 
 
-def execute_tool(tools: ToolExecutor, name: str, args: dict[str, Any]) -> tuple[str, str | None]:
-    """Run one tool call; returns ``(result_text, error)``. Never raises for tool/transport errors."""
+def _accepts_timeout(tools: ToolExecutor) -> bool:
     try:
-        res = tools.call_tool(name, args)
+        params = inspect.signature(tools.call_tool).parameters
+    except (TypeError, ValueError):
+        return False
+    return "timeout" in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
+def execute_tool(
+    tools: ToolExecutor, name: str, args: dict[str, Any], timeout: float | None = None
+) -> tuple[str, str | None]:
+    """Run one tool call; returns ``(result_text, error)``. Never raises for tool/transport errors.
+
+    ``timeout`` is passed to executors whose ``call_tool`` accepts it (e.g. ``MCPClient``)."""
+    try:
+        if timeout is not None and _accepts_timeout(tools):
+            res = tools.call_tool(name, args, timeout=timeout)  # type: ignore[call-arg]
+        else:
+            res = tools.call_tool(name, args)
     except Exception as e:  # noqa: BLE001 - any tool-side failure is reported back to the model
         return "", f"{type(e).__name__}: {e}"
     if res.is_error:
@@ -161,6 +224,7 @@ def run_anthropic_agent(
     max_retries: int = DEFAULT_MAX_RETRIES,
     retry_base_delay: float = DEFAULT_RETRY_BASE_DELAY,
     sleep: Callable[[float], None] = time.sleep,
+    policy: ToolPolicy | None = None,
 ) -> AgentRun:
     """Run Claude with the executor's tools until it answers without a tool call or ``max_steps``
     model turns have been used.
@@ -170,7 +234,11 @@ def run_anthropic_agent(
     A provider failure (after retries) ends the run with ``stop_reason="error"``; hitting
     ``max_steps`` sets ``stop_reason="max_steps"`` and an ``error`` message, with the last text the
     model produced as ``output``.
+
+    ``policy`` (a :class:`ToolPolicy`) hides disallowed tools from the model, blocks calls to
+    them (recorded with ``blocked=True`` and an error) and sets the per-call timeout.
     """
+    policy = policy or ToolPolicy()
     if max_steps < 1:
         raise ValueError("max_steps must be >= 1")
     start = time.perf_counter()
@@ -183,7 +251,7 @@ def run_anthropic_agent(
         return run
 
     try:
-        specs = anthropic_tool_specs(tools.list_tools())
+        specs = anthropic_tool_specs([t for t in tools.list_tools() if policy.is_allowed(t.name)])
     except Exception as e:  # noqa: BLE001
         return finish(stop_reason="error", error=f"listing tools failed: {type(e).__name__}: {e}")
 
@@ -225,12 +293,18 @@ def run_anthropic_agent(
         for tu in tool_uses:
             name = str(_get(tu, "name", ""))
             args, arg_error = _coerce_args(_get(tu, "input"))
-            if arg_error is None:
-                text, error = execute_tool(tools, name, args)
+            denied = policy.denial_reason(name)
+            if denied is not None:
+                text, error = "", denied
+            elif arg_error is None:
+                text, error = execute_tool(tools, name, args, timeout=policy.tool_timeout)
             else:
                 text, error = "", arg_error
             run.tool_calls.append(
-                ToolCallRecord(name=name, args=args, result=text, error=error, step=step, id=_get(tu, "id"))
+                ToolCallRecord(
+                    name=name, args=args, result=text, error=error, blocked=denied is not None,
+                    step=step, id=_get(tu, "id"),
+                )
             )
             result: dict[str, Any] = {
                 "type": "tool_result",

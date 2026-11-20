@@ -5,6 +5,11 @@ adapter:
   type: mcp                # needs ANTHROPIC_API_KEY and the mcp extra: pip install -e ".[mcp,anthropic]"
   model: claude-haiku-5-5
   max_steps: 6
+  # Tool policy: only these tools are offered/executed (globs ok); denied_tools wins over it.
+  # Blocked calls are not run and are recorded with blocked: true and an error.
+  allowed_tools: [list_warehouses, search_parts, get_part, check_stock, reserve_part]
+  denied_tools: []
+  tool_timeout: 10         # per-call timeout in seconds (overrides server.call_timeout)
   system_prompt: >-
     You are a parts-inventory assistant. Use the inventory tools to look up parts and stock.
     Always check stock before reserving a part. If a tool reports an error, explain it plainly.

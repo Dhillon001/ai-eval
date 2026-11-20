@@ -9,9 +9,15 @@ stored in ``RunResult.trace["tool_calls"]`` for the trajectory / tool-use scorer
       type: mcp
       model: claude-haiku-5-5
       max_steps: 6
+      allowed_tools: [find_part, check_stock, reserve_part]   # optional allowlist (globs ok)
+      denied_tools: ["delete_*"]                              # optional denylist (wins over allow)
+      tool_timeout: 10                                        # optional per-call timeout (s)
       server:
         command: python
         args: [examples/mcp_inventory_server.py]
+
+Disallowed tools are hidden from the model; calls to them are not executed and are recorded in
+the trace with ``blocked: true`` and an error.
 
 Relative ``server.cwd`` (or no ``cwd`` at all) is resolved against the project root, so suites run
 the same from any working directory.
@@ -24,7 +30,13 @@ from pathlib import Path
 from typing import Any
 
 from ai_eval.adapters.base import SystemAdapter
-from ai_eval.agent_loop import DEFAULT_AGENT_SYSTEM_PROMPT, DEFAULT_MAX_STEPS, ToolExecutor, run_anthropic_agent
+from ai_eval.agent_loop import (
+    DEFAULT_AGENT_SYSTEM_PROMPT,
+    DEFAULT_MAX_STEPS,
+    ToolExecutor,
+    ToolPolicy,
+    run_anthropic_agent,
+)
 from ai_eval.llm import DEFAULT_MAX_RETRIES, LLMError, build_user_prompt, make_client
 from ai_eval.mcp_client import MCPClient, MCPServerConfig
 from ai_eval.models import EvalCase, RunResult
@@ -32,6 +44,7 @@ from ai_eval.models import EvalCase, RunResult
 MCP_OPTIONS = (
     "server", "provider", "model", "base_url", "system_prompt", "max_steps",
     "temperature", "max_tokens", "max_retries", "root",
+    "allowed_tools", "denied_tools", "tool_timeout",
 )
 PROVIDERS = ("anthropic",)
 
@@ -59,6 +72,9 @@ class MCPAdapter(SystemAdapter):
         max_tokens: int = 1024,
         max_retries: int = DEFAULT_MAX_RETRIES,
         root: str | Path | None = None,
+        allowed_tools: list[str] | None = None,
+        denied_tools: list[str] | None = None,
+        tool_timeout: float | None = None,
         client: Any = None,
         tools: ToolExecutor | None = None,
     ):
@@ -68,6 +84,12 @@ class MCPAdapter(SystemAdapter):
             raise ValueError("max_steps must be >= 1")
         if max_retries < 0:
             raise ValueError("max_retries must be >= 0")
+        try:
+            self.policy = ToolPolicy(
+                allowed_tools=allowed_tools, denied_tools=denied_tools or [], tool_timeout=tool_timeout
+            )
+        except ValueError as e:
+            raise ValueError(f"invalid mcp tool policy: {e}") from None
         if tools is None:
             if server is None:
                 raise ValueError("mcp adapter requires a 'server' mapping with at least a 'command'")
@@ -136,6 +158,7 @@ class MCPAdapter(SystemAdapter):
             temperature=self.temperature,
             max_tokens=self.max_tokens,
             max_retries=self.max_retries,
+            policy=self.policy,
         )
         result = agent.to_run_result(case.id)
         result.trace = {**self._trace_base(), **result.trace}
