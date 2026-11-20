@@ -137,6 +137,87 @@ Every run also writes an HTML report to `.ai-eval/reports/`.
 
 ---
 
+## 🔧 Evaluating MCP servers
+
+An [MCP](https://modelcontextprotocol.io) server is only as good as an agent's ability to use it. The `mcp` adapter launches your stdio server, lets a model (Claude, or any OpenAI function-calling model) answer each test case with the server's tools, and records every call so you can score **which tools were called, with what arguments, and how many calls it took**.
+
+```mermaid
+flowchart LR
+    Q["📄 Case<br/>question + expected_tools"] --> L{{"🤖 Agent loop<br/>Claude / OpenAI"}}
+    L -->|tool call| S["🔧 Your MCP server<br/>(stdio)"]
+    S -->|result or error| L
+    L -->|final answer + trace.tool_calls| SC["🎯 trajectory · tool_use"]
+```
+
+The repo ships a toy parts-inventory server, [`examples/mcp_inventory_server.py`](examples/mcp_inventory_server.py), with five tools (`list_warehouses`, `search_parts`, `get_part`, `check_stock`, `reserve_part`) and an 8-case suite that covers lookups, multi-step questions, reservations, tool errors (unknown SKU, not enough stock) and a question that needs no tools at all.
+
+**1. Write cases with the calls you expect.** Each case in [`datasets/examples/mcp_inventory_v1.jsonl`](datasets/examples/mcp_inventory_v1.jsonl) lists `expected_tools` — tool names, or `{name, args}` when the arguments matter:
+
+```json
+{"id": "mcp-reserve",
+ "input": "Reserve 2 BRK-001 brake pad sets from the Seattle warehouse.",
+ "expected": "Reserved 2 BRK-001 in Seattle (reservation R-0001).",
+ "metadata": {"expected_tools": [
+   {"name": "check_stock",  "args": {"sku": "BRK-001"}},
+   {"name": "reserve_part", "args": {"sku": "BRK-001", "quantity": 2, "warehouse": "SEA"}}]}}
+```
+
+**2. Point the suite at your server.** [`configs/mcp_suite.yaml`](configs/mcp_suite.yaml):
+
+```yaml
+adapter:
+  type: mcp
+  provider: anthropic          # or openai
+  model: claude-haiku-5-5
+  max_steps: 6                 # model turns before the case fails with stop_reason=max_steps
+  allowed_tools: [list_warehouses, search_parts, get_part, check_stock, reserve_part]
+  denied_tools: []             # globs ok, e.g. ["delete_*"]; denylist wins over allowlist
+  tool_timeout: 10             # seconds per tool call
+  server:
+    command: python            # resolves to the running interpreter
+    args: [examples/mcp_inventory_server.py]
+scorers:
+  - type: trajectory           # every expected call happened, with the expected args
+    mode: subset
+    match_args: true
+  - type: tool_use             # precision, recall, invalid-arg rate, efficiency
+    min_recall: 1.0
+    max_invalid_arg_rate: 0.0
+    min_efficiency: 0.5        # at most twice the optimal number of calls
+```
+
+Tools outside the allowlist (or on the denylist) are never offered to the model; if it calls one anyway, the call is not run and is recorded with `blocked: true` and an error.
+
+**3. Run it.** Offline first — the `mock` adapter replays each case's `metadata.mock_tool_calls`, so you can check the suite and scorers without a key:
+
+```bash
+ai-eval run --suite configs/mcp_suite.yaml --adapter mock
+# Pass rate: 8/8 (100.0%) | mean score: 0.984
+```
+
+The mean is below 1.0 because one replayed trajectory calls `list_warehouses` before `check_stock`: 2 calls where 1 was optimal, so `tool_use` efficiency is 0.5 — still within `min_efficiency`, but visible in the report.
+
+Then against a real model and the real server:
+
+```bash
+pip install -e ".[mcp,anthropic]"          # or ".[mcp,openai]" with provider: openai
+export ANTHROPIC_API_KEY=...
+ai-eval run --suite configs/mcp_suite.yaml --save-baseline mcp-baseline.json
+```
+
+**4. Read the results.** Every outcome stores the full trajectory in `trace.tool_calls` (`name`, `args`, `result`, `error`, `step`), plus `steps` and `stop_reason`; the HTML report shows it per case. The `tool_use` scorer reports:
+
+| metric | meaning |
+|---|---|
+| `precision` | share of calls made that matched an expected call — extra, repeated or wrong-tool calls lower it |
+| `recall` | expected calls that actually happened (with matching args) |
+| `invalid_arg_rate` | share of calls rejected for bad arguments (validation errors, optional JSON-schema check) |
+| `efficiency` | optimal calls / calls made (optimal = `metadata.optimal_steps` or the number of expected calls) |
+
+Change a tool description, rename a parameter or swap the model, run again, and `ai-eval compare --baseline-file mcp-baseline.json --candidate-file candidate.json` shows exactly which cases started calling the wrong tools.
+
+---
+
 ## 📚 More
 
 Adapters, cost tracking, retries, the judge cache, benchmarks and every command are in the **[full reference](docs/REFERENCE.md)**.

@@ -14,7 +14,7 @@ Tests never hit real networks or API keys — use fakes in `tests/fakes.py` / in
 - [x] 7. Tests for the `tool_use` scorer.
 - [x] 8. Safety: tool allowlist/denylist, per-call timeout and max steps in config; disallowed calls recorded as errors; tests.
 - [x] 9. OpenAI function-calling support in the agent loop (provider-agnostic), with tests via the fake OpenAI client.
-- [ ] 10. Docs: README "Evaluating MCP servers" section with the inventory example end to end.
+- [x] 10. Docs: README "Evaluating MCP servers" section with the inventory example end to end.
 
 ## Statistical rigor
 - [ ] 11. Core: `ai-eval run --repeats N` — N samples per case stored per outcome; case pass rate and consistency.
