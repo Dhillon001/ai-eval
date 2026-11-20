@@ -11,7 +11,7 @@ Tests never hit real networks or API keys — use fakes in `tests/fakes.py` / in
 - [x] 4. Tests: agent loop driven by a fake Anthropic client that emits tool_use blocks (single call, multi-step, tool error, max_steps hit).
 - [x] 5. Wiring: register `mcp` adapter; `examples/mcp_inventory_server.py` (toy parts-inventory MCP server); `configs/mcp_suite.yaml` + 8-case dataset with `expected_tools`.
 - [x] 6. Core: `tool_use` scorer — tool precision/recall, invalid-argument rate, steps vs. optimal (efficiency), with pass thresholds.
-- [ ] 7. Tests for the `tool_use` scorer.
+- [x] 7. Tests for the `tool_use` scorer.
 - [ ] 8. Safety: tool allowlist/denylist, per-call timeout and max steps in config; disallowed calls recorded as errors; tests.
 - [ ] 9. OpenAI function-calling support in the agent loop (provider-agnostic), with tests via the fake OpenAI client.
 - [ ] 10. Docs: README "Evaluating MCP servers" section with the inventory example end to end.
