@@ -1,4 +1,4 @@
-"""Evaluate an MCP server end to end: Claude answers each case using the server's tools.
+"""Evaluate an MCP server end to end: a model answers each case using the server's tools.
 
 The adapter launches the stdio server once per run (lazily, on the first case), shares it across
 cases (the client serialises calls, so ``--concurrency`` is safe), runs the agent loop for each
@@ -7,6 +7,7 @@ stored in ``RunResult.trace["tool_calls"]`` for the trajectory / tool-use scorer
 
     adapter:
       type: mcp
+      provider: anthropic        # or openai (function calling; also OpenAI-compatible base_url)
       model: claude-haiku-5-5
       max_steps: 6
       allowed_tools: [find_part, check_stock, reserve_part]   # optional allowlist (globs ok)
@@ -31,11 +32,12 @@ from typing import Any
 
 from ai_eval.adapters.base import SystemAdapter
 from ai_eval.agent_loop import (
+    AGENT_PROVIDERS,
     DEFAULT_AGENT_SYSTEM_PROMPT,
     DEFAULT_MAX_STEPS,
     ToolExecutor,
     ToolPolicy,
-    run_anthropic_agent,
+    run_agent,
 )
 from ai_eval.llm import DEFAULT_MAX_RETRIES, LLMError, build_user_prompt, make_client
 from ai_eval.mcp_client import MCPClient, MCPServerConfig
@@ -46,19 +48,22 @@ MCP_OPTIONS = (
     "temperature", "max_tokens", "max_retries", "root",
     "allowed_tools", "denied_tools", "tool_timeout",
 )
-PROVIDERS = ("anthropic",)
+PROVIDERS = AGENT_PROVIDERS
+DEFAULT_MODELS = {"anthropic": "claude-haiku-5-5", "openai": "gpt-4o-mini"}
+DEFAULT_ANTHROPIC_MAX_TOKENS = 1024
 
 
 class MCPAdapter(SystemAdapter):
-    """Run Claude against a stdio MCP server's tools for each case.
+    """Run a model (Claude or an OpenAI function-calling model) against a stdio MCP server's
+    tools for each case.
 
-    ``client`` (an Anthropic-style client) and ``tools`` (anything satisfying
+    ``client`` (an Anthropic- or OpenAI-style client, matching ``provider``) and ``tools`` (anything satisfying
     :class:`~ai_eval.agent_loop.ToolExecutor`) can be injected for tests; otherwise they are built
-    from the environment (``ANTHROPIC_API_KEY``) and the ``server`` config.
+    from the environment (``ANTHROPIC_API_KEY`` / ``OPENAI_API_KEY``) and the ``server`` config.
     """
 
     name = "mcp"
-    default_model = "claude-haiku-5-5"
+    default_model = DEFAULT_MODELS["anthropic"]
 
     def __init__(
         self,
@@ -69,7 +74,7 @@ class MCPAdapter(SystemAdapter):
         system_prompt: str | None = None,
         max_steps: int = DEFAULT_MAX_STEPS,
         temperature: float = 0.0,
-        max_tokens: int = 1024,
+        max_tokens: int | None = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
         root: str | Path | None = None,
         allowed_tools: list[str] | None = None,
@@ -98,7 +103,7 @@ class MCPAdapter(SystemAdapter):
         else:
             self.server_config = None
         self.provider = provider
-        self.model = model or self.default_model
+        self.model = model or DEFAULT_MODELS[provider]
         self.base_url = base_url
         self.system_prompt = system_prompt or DEFAULT_AGENT_SYSTEM_PROMPT
         self.max_steps = max_steps
@@ -148,7 +153,12 @@ class MCPAdapter(SystemAdapter):
         except RuntimeError as e:
             return RunResult(case_id=case.id, output="", trace=self._trace_base(), error=str(e))
 
-        agent = run_anthropic_agent(
+        # Anthropic requires max_tokens; OpenAI-compatible servers only get a limit when set.
+        max_tokens = self.max_tokens
+        if max_tokens is None and self.provider == "anthropic":
+            max_tokens = DEFAULT_ANTHROPIC_MAX_TOKENS
+        agent = run_agent(
+            self.provider,
             client,
             tools,
             model=self.model,
@@ -156,7 +166,7 @@ class MCPAdapter(SystemAdapter):
             system=self.system_prompt,
             max_steps=self.max_steps,
             temperature=self.temperature,
-            max_tokens=self.max_tokens,
+            max_tokens=max_tokens,
             max_retries=self.max_retries,
             policy=self.policy,
         )

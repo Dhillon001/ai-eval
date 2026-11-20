@@ -43,7 +43,7 @@ def test_mcp_is_registered_and_validates_options():
     with pytest.raises(ValueError, match="server"):
         build_adapter("mcp", {})
     with pytest.raises(ValueError, match="provider"):
-        build_adapter("mcp", {"server": {"command": "python"}, "provider": "openai"})
+        build_adapter("mcp", {"server": {"command": "python"}, "provider": "gemini"})
     with pytest.raises(ValueError, match="max_steps"):
         build_adapter("mcp", {"server": {"command": "python"}, "max_steps": 0})
 

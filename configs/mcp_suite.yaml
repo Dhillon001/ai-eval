@@ -3,6 +3,7 @@ description: Claude answers parts-inventory questions using the tools of a local
 dataset: datasets/examples/mcp_inventory_v1.jsonl
 adapter:
   type: mcp                # needs ANTHROPIC_API_KEY and the mcp extra: pip install -e ".[mcp,anthropic]"
+  provider: anthropic      # or openai (function calling; OPENAI_API_KEY, ".[mcp,openai]", e.g. model: gpt-4o-mini)
   model: claude-haiku-5-5
   max_steps: 6
   # Tool policy: only these tools are offered/executed (globs ok); denied_tools wins over it.

@@ -1,7 +1,7 @@
-"""Tool-using agent loop: expose MCP tools to Claude and run until a final answer.
+"""Tool-using agent loop: expose MCP tools to a model and run until a final answer.
 
-The loop is provider-facing on one side (an Anthropic ``messages.create`` client, real or fake)
-and tool-facing on the other (anything with ``list_tools()`` / ``call_tool(name, args)``, such
+The loop is provider-facing on one side (an Anthropic ``messages.create`` client or an OpenAI
+``chat.completions.create`` client with function calling, real or fake) and tool-facing on the other (anything with ``list_tools()`` / ``call_tool(name, args)``, such
 as :class:`ai_eval.mcp_client.MCPClient`). Each model turn that asks for tools has them executed
 and their results sent back; the loop stops when the model answers without asking for a tool, or
 after ``max_steps`` model turns.
@@ -12,6 +12,10 @@ Every tool call is recorded as ``{"name", "args", "result", "error"}`` so it can
     with MCPClient(server_config) as tools:
         agent = run_anthropic_agent(client, tools, model="claude-haiku-5-5", user="How many M3 bolts?")
     result = agent.to_run_result(case.id)
+
+:func:`run_openai_agent` is the same loop over OpenAI function calling (also any
+OpenAI-compatible endpoint), and :func:`run_agent` picks one by ``provider`` name. Both produce the
+same :class:`AgentRun` / trace shape, so scorers don't care which provider drove the agent.
 
 A :class:`ToolPolicy` limits what the agent may do: an allowlist and/or denylist of tool names
 (exact names or ``fnmatch`` globs such as ``delete_*``) and a per-call timeout. Disallowed tools
@@ -34,6 +38,7 @@ from ai_eval.llm import DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY, call_with
 from ai_eval.mcp_client import MCPTool, MCPToolResult
 from ai_eval.models import RunResult
 
+AGENT_PROVIDERS = ("anthropic", "openai")
 DEFAULT_MAX_STEPS = 8
 DEFAULT_AGENT_SYSTEM_PROMPT = (
     "You are a helpful assistant with access to tools. Use them when they help answer the "
@@ -147,6 +152,17 @@ def anthropic_tool_specs(tools: list[MCPTool]) -> list[dict[str, Any]]:
     return specs
 
 
+def openai_tool_specs(tools: list[MCPTool]) -> list[dict[str, Any]]:
+    """MCP tool definitions in OpenAI ``tools=[{"type": "function", ...}]`` format."""
+    specs = []
+    for t in anthropic_tool_specs(tools):
+        fn: dict[str, Any] = {"name": t["name"], "parameters": t["input_schema"]}
+        if "description" in t:
+            fn["description"] = t["description"]
+        specs.append({"type": "function", "function": fn})
+    return specs
+
+
 def _get(block: Any, key: str, default: Any = None) -> Any:
     if isinstance(block, dict):
         return block.get(key, default)
@@ -210,6 +226,38 @@ def execute_tool(
     if res.is_error:
         return res.text, res.text or "tool reported an error"
     return res.text, None
+
+
+def _handle_tool_call(
+    tools: ToolExecutor,
+    policy: ToolPolicy,
+    run: AgentRun,
+    name: str,
+    raw_args: Any,
+    step: int,
+    call_id: str | None,
+) -> tuple[str, str | None]:
+    """Check policy, parse arguments, execute and record one requested call; returns
+    ``(result_text, error)`` for the provider-specific tool-result message."""
+    args, arg_error = _coerce_args(raw_args)
+    denied = policy.denial_reason(name)
+    if denied is not None:
+        text, error = "", denied
+    elif arg_error is None:
+        text, error = execute_tool(tools, name, args, timeout=policy.tool_timeout)
+    else:
+        text, error = "", arg_error
+    run.tool_calls.append(
+        ToolCallRecord(
+            name=name, args=args, result=text, error=error, blocked=denied is not None,
+            step=step, id=call_id,
+        )
+    )
+    return text, error
+
+
+def _tool_result_text(text: str, error: str | None) -> str:
+    return (f"Error: {error}" if error and not text else text) or "(no output)"
 
 
 def run_anthropic_agent(
@@ -291,25 +339,13 @@ def run_anthropic_agent(
         messages.append({"role": "assistant", "content": [p for b in blocks if (p := _block_to_param(b))]})
         results: list[dict[str, Any]] = []
         for tu in tool_uses:
-            name = str(_get(tu, "name", ""))
-            args, arg_error = _coerce_args(_get(tu, "input"))
-            denied = policy.denial_reason(name)
-            if denied is not None:
-                text, error = "", denied
-            elif arg_error is None:
-                text, error = execute_tool(tools, name, args, timeout=policy.tool_timeout)
-            else:
-                text, error = "", arg_error
-            run.tool_calls.append(
-                ToolCallRecord(
-                    name=name, args=args, result=text, error=error, blocked=denied is not None,
-                    step=step, id=_get(tu, "id"),
-                )
+            text, error = _handle_tool_call(
+                tools, policy, run, str(_get(tu, "name", "")), _get(tu, "input"), step, _get(tu, "id")
             )
             result: dict[str, Any] = {
                 "type": "tool_result",
                 "tool_use_id": _get(tu, "id"),
-                "content": (f"Error: {error}" if error and not text else text) or "(no output)",
+                "content": _tool_result_text(text, error),
             }
             if error:
                 result["is_error"] = True
@@ -321,3 +357,113 @@ def run_anthropic_agent(
         stop_reason="max_steps",
         error=f"max_steps ({max_steps}) reached without a final answer",
     )
+
+
+def _openai_tool_call_param(tc: Any) -> dict[str, Any]:
+    """An assistant ``tool_calls`` entry as it must be replayed in the next request."""
+    fn = _get(tc, "function")
+    arguments = _get(fn, "arguments")
+    if not isinstance(arguments, str):
+        arguments = json.dumps(arguments if arguments is not None else {})
+    return {
+        "id": _get(tc, "id"),
+        "type": "function",
+        "function": {"name": _get(fn, "name", ""), "arguments": arguments},
+    }
+
+
+def run_openai_agent(
+    client: Any,
+    tools: ToolExecutor,
+    model: str,
+    user: str,
+    system: str = DEFAULT_AGENT_SYSTEM_PROMPT,
+    max_steps: int = DEFAULT_MAX_STEPS,
+    temperature: float = 0.0,
+    max_tokens: int | None = None,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    retry_base_delay: float = DEFAULT_RETRY_BASE_DELAY,
+    sleep: Callable[[float], None] = time.sleep,
+    policy: ToolPolicy | None = None,
+) -> AgentRun:
+    """The agent loop over OpenAI function calling (``chat.completions.create`` with ``tools``).
+
+    Behaves exactly like :func:`run_anthropic_agent`: tool failures are recorded and returned to
+    the model as ``role: "tool"`` messages (prefixed ``Error:``) so it can recover, malformed JSON
+    ``arguments`` are recorded as invalid-argument errors without running the tool, a provider
+    failure ends the run with ``stop_reason="error"`` and ``max_steps`` caps model turns.
+
+    ``max_tokens`` is sent as ``max_completion_tokens`` only when given, since OpenAI-compatible
+    servers differ in which token-limit parameter they accept.
+    """
+    policy = policy or ToolPolicy()
+    if max_steps < 1:
+        raise ValueError("max_steps must be >= 1")
+    start = time.perf_counter()
+    run = AgentRun(model=model, provider="openai")
+
+    def finish(**updates: Any) -> AgentRun:
+        for k, v in updates.items():
+            setattr(run, k, v)
+        run.latency_ms = (time.perf_counter() - start) * 1000
+        return run
+
+    try:
+        specs = openai_tool_specs([t for t in tools.list_tools() if policy.is_allowed(t.name)])
+    except Exception as e:  # noqa: BLE001
+        return finish(stop_reason="error", error=f"listing tools failed: {type(e).__name__}: {e}")
+
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+    last_text = ""
+    for step in range(1, max_steps + 1):
+        kwargs: dict[str, Any] = {"model": model, "messages": list(messages), "temperature": temperature}
+        if max_tokens is not None:
+            kwargs["max_completion_tokens"] = max_tokens
+        if specs:
+            kwargs["tools"] = specs
+        try:
+            resp, retries = call_with_retries(
+                lambda: client.chat.completions.create(**kwargs),
+                max_retries=max_retries,
+                base_delay=retry_base_delay,
+                sleep=sleep,
+            )
+        except Exception as e:  # noqa: BLE001
+            return finish(output=last_text, stop_reason="error", error=f"{type(e).__name__}: {e}")
+        run.steps = step
+        run.retries += retries
+        usage = getattr(resp, "usage", None)
+        run.prompt_tokens = _add(run.prompt_tokens, getattr(usage, "prompt_tokens", None))
+        run.completion_tokens = _add(run.completion_tokens, getattr(usage, "completion_tokens", None))
+
+        choices = list(getattr(resp, "choices", None) or [])
+        if not choices:
+            return finish(output=last_text, stop_reason="error", error="provider returned no choices")
+        message = _get(choices[0], "message")
+        last_text = _get(message, "content") or ""
+        tool_calls = list(_get(message, "tool_calls") or [])
+        if not tool_calls:
+            return finish(output=last_text, stop_reason="final_answer")
+
+        replay = [_openai_tool_call_param(tc) for tc in tool_calls]
+        messages.append({"role": "assistant", "content": last_text or None, "tool_calls": replay})
+        for tc, param in zip(tool_calls, replay):
+            text, error = _handle_tool_call(
+                tools, policy, run, param["function"]["name"], param["function"]["arguments"], step, param["id"]
+            )
+            messages.append({"role": "tool", "tool_call_id": param["id"], "content": _tool_result_text(text, error)})
+
+    return finish(
+        output=last_text,
+        stop_reason="max_steps",
+        error=f"max_steps ({max_steps}) reached without a final answer",
+    )
+
+
+def run_agent(provider: str, client: Any, tools: ToolExecutor, model: str, user: str, **kwargs: Any) -> AgentRun:
+    """Run the agent loop for ``provider`` (``anthropic`` or ``openai``)."""
+    if provider == "anthropic":
+        return run_anthropic_agent(client, tools, model=model, user=user, **kwargs)
+    if provider == "openai":
+        return run_openai_agent(client, tools, model=model, user=user, **kwargs)
+    raise ValueError(f"agent provider must be one of {', '.join(AGENT_PROVIDERS)}, got {provider!r}")

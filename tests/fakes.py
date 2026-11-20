@@ -123,6 +123,55 @@ class FakeAnthropicAgent:
         return SimpleNamespace(content=blocks, usage=self._usage)
 
 
+def openai_tool_call(name, arguments=None, id=None):
+    """An OpenAI ``tool_calls`` entry; ``arguments`` may be a dict (JSON-encoded) or a raw string."""
+    import json
+
+    raw = arguments if isinstance(arguments, str) else json.dumps(arguments or {})
+    return SimpleNamespace(
+        id=id or f"call_{name}", type="function", function=SimpleNamespace(name=name, arguments=raw)
+    )
+
+
+class FakeOpenAIAgent:
+    """Scripted OpenAI client for agent-loop tests (function calling).
+
+    ``turns`` is a list of responses, one per ``chat.completions.create`` call; each is a plain
+    string (a text-only final answer), a list of ``openai_tool_call`` entries, a ``(text,
+    [tool_calls])`` tuple, or an exception to raise. ``repeat_last`` works as in
+    :class:`FakeAnthropicAgent`.
+    """
+
+    def __init__(self, turns, repeat_last=False, prompt_tokens=20, completion_tokens=8):
+        self.calls = []
+        self._turns = list(turns)
+        self._repeat_last = repeat_last
+        self._usage = SimpleNamespace(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+    def _create(self, **kw):
+        import copy
+
+        self.calls.append(copy.deepcopy(kw))
+        idx = len(self.calls) - 1
+        if idx >= len(self._turns):
+            if not (self._repeat_last and self._turns):
+                raise AssertionError(f"FakeOpenAIAgent: unexpected call #{idx + 1}")
+            idx = len(self._turns) - 1
+        turn = self._turns[idx]
+        if isinstance(turn, BaseException):
+            raise turn
+        if isinstance(turn, str):
+            content, tool_calls = turn, None
+        elif isinstance(turn, tuple):
+            content, tool_calls = turn
+        else:
+            content, tool_calls = None, list(turn)
+        message = SimpleNamespace(role="assistant", content=content, tool_calls=tool_calls or None)
+        finish = "tool_calls" if tool_calls else "stop"
+        return SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason=finish)], usage=self._usage)
+
+
 class FakeToolExecutor:
     """In-memory stand-in for ``MCPClient``: ``tools`` maps name -> callable(**args).
 
