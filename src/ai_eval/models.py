@@ -47,16 +47,66 @@ class ScoreResult(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
-class CaseOutcome(BaseModel):
-    case_id: str
+def _sample_passed(run: RunResult, scores: list[ScoreResult]) -> bool:
+    if not scores:
+        return run.error is None
+    return all(s.passed for s in scores)
+
+
+class CaseSample(BaseModel):
+    """One of several runs of the same case (``ai-eval run --repeats N``)."""
+
     run: RunResult
     scores: list[ScoreResult] = Field(default_factory=list)
 
     @property
     def passed(self) -> bool:
-        if not self.scores:
-            return self.run.error is None
-        return all(s.passed for s in self.scores)
+        return _sample_passed(self.run, self.scores)
+
+
+class CaseOutcome(BaseModel):
+    """The result of one case.
+
+    ``run``/``scores`` hold the first sample. With ``--repeats N`` (N > 1), ``samples`` holds all N
+    samples (the first one included) and the case passes when a strict majority of its samples
+    pass; ``pass_rate`` and ``consistency`` describe the spread. Without repeats ``samples`` is
+    empty and the outcome behaves exactly as a single run.
+    """
+
+    case_id: str
+    run: RunResult
+    scores: list[ScoreResult] = Field(default_factory=list)
+    samples: list[CaseSample] = Field(default_factory=list)
+
+    def sample_list(self) -> list[CaseSample]:
+        """Every sample of this case: ``samples`` when repeated, else the single run."""
+        return self.samples or [CaseSample(run=self.run, scores=self.scores)]
+
+    @property
+    def repeats(self) -> int:
+        return len(self.samples) or 1
+
+    @property
+    def passed_samples(self) -> int:
+        return sum(1 for s in self.sample_list() if s.passed)
+
+    @property
+    def pass_rate(self) -> float:
+        """Fraction of samples that passed (0.0 or 1.0 for a single run)."""
+        return self.passed_samples / self.repeats
+
+    @property
+    def consistency(self) -> float:
+        """Fraction of samples that agree with the majority outcome: 1.0 when every sample
+        passed or every sample failed, down to 0.5 for an even split."""
+        k, n = self.passed_samples, self.repeats
+        return max(k, n - k) / n
+
+    @property
+    def passed(self) -> bool:
+        if self.samples:
+            return self.passed_samples * 2 > len(self.samples)
+        return _sample_passed(self.run, self.scores)
 
 
 class SuiteConfig(BaseModel):

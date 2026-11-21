@@ -17,7 +17,7 @@ Tests never hit real networks or API keys — use fakes in `tests/fakes.py` / in
 - [x] 10. Docs: README "Evaluating MCP servers" section with the inventory example end to end.
 
 ## Statistical rigor
-- [ ] 11. Core: `ai-eval run --repeats N` — N samples per case stored per outcome; case pass rate and consistency.
+- [x] 11. Core: `ai-eval run --repeats N` — N samples per case stored per outcome; case pass rate and consistency.
 - [ ] 12. Tests for repeats (storage, summary math, concurrency with repeats).
 - [ ] 13. Core: `ai_eval/stats.py` — bootstrap confidence intervals for pass rate and mean score (seeded), with tests.
 - [ ] 14. Core: significance in `compare` — McNemar test for paired pass/fail flips, paired bootstrap for score deltas; report p-values and CIs.

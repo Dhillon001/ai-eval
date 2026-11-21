@@ -30,6 +30,10 @@ def run(
     adapter: Optional[str] = typer.Option(None, "--adapter", help="Override adapter: mock, openai, anthropic, http, mcp"),
     model: Optional[str] = typer.Option(None, "--model", help="Model name for the openai/anthropic/mcp adapter"),
     concurrency: int = typer.Option(1, "--concurrency", "-j", min=1, help="Cases to run in parallel"),
+    repeats: int = typer.Option(
+        1, "--repeats", "-n", min=1,
+        help="Run every case N times; a case passes on a strict majority of its samples",
+    ),
     min_pass_rate: float = typer.Option(0.0, "--min-pass-rate", help="Exit 1 if pass rate below this"),
     save_baseline: Optional[Path] = typer.Option(
         None, "--save-baseline", help="Also export this run (summary, outcomes, cases) as JSON to PATH"
@@ -58,6 +62,7 @@ def run(
             concurrency=concurrency,
             on_case_done=lambda _o: progress.advance(task),
             use_cache=not no_cache,
+            repeats=repeats,
         )
     report_path = generate_report(root, run_id)
 
@@ -67,6 +72,11 @@ def run(
         f"mean score: {summary.mean_score:.3f}"
     )
     m = summary.metadata
+    if repeats > 1:
+        console.print(
+            f"Repeats: {repeats} per case | sample pass rate: {m.get('sample_pass_rate', 0):.1%} | "
+            f"mean consistency: {m.get('mean_consistency', 0):.1%}"
+        )
     console.print(
         f"Errors: {m.get('errors', 0)} | latency p50/p95: {m.get('latency_ms_p50', 0):.0f}/"
         f"{m.get('latency_ms_p95', 0):.0f} ms"

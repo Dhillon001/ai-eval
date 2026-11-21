@@ -105,8 +105,8 @@ def run_cost(outcomes: list[CaseOutcome], table: PriceTable, default_model: str 
     judge: float | None = None
     unpriced: set[str] = set()
 
-    for o in outcomes:
-        run = o.run
+    for sample in (smp for o in outcomes for smp in o.sample_list()):
+        run = sample.run
         if run.prompt_tokens is not None or run.completion_tokens is not None:
             model = run.trace.get("model") or default_model
             c = table.cost(model, run.prompt_tokens, run.completion_tokens)
@@ -114,7 +114,7 @@ def run_cost(outcomes: list[CaseOutcome], table: PriceTable, default_model: str 
                 unpriced.add(model or "<unknown>")
             else:
                 system = (system or 0.0) + c
-        for s in o.scores:
+        for s in sample.scores:
             d = s.details
             if d.get("cached") is True:
                 continue
