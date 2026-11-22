@@ -19,7 +19,7 @@ Tests never hit real networks or API keys — use fakes in `tests/fakes.py` / in
 ## Statistical rigor
 - [x] 11. Core: `ai-eval run --repeats N` — N samples per case stored per outcome; case pass rate and consistency.
 - [x] 12. Tests for repeats (storage, summary math, concurrency with repeats).
-- [ ] 13. Core: `ai_eval/stats.py` — bootstrap confidence intervals for pass rate and mean score (seeded), with tests.
+- [x] 13. Core: `ai_eval/stats.py` — bootstrap confidence intervals for pass rate and mean score (seeded), with tests.
 - [ ] 14. Core: significance in `compare` — McNemar test for paired pass/fail flips, paired bootstrap for score deltas; report p-values and CIs.
 - [ ] 15. Tests for compare significance (clear regression, noise-only change, small samples).
 - [ ] 16. Core: flaky-case detection (mixed outcomes across repeats) in run summary and CLI output.
