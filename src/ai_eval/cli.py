@@ -232,6 +232,14 @@ def report(
         f"improvements: {len(diff['improvements'])} | pass rate {a.summary.pass_rate:.1%} -> "
         f"{b.summary.pass_rate:.1%}"
     )
+    sig = diff["significance"]
+    score = sig.get("score_delta")
+    if score:
+        console.print(
+            f"Significance ({sig['n_pairs']} paired cases): McNemar p={sig['mcnemar']['p_value']:.3g} | "
+            f"score delta {score['estimate']:+.3f} [{score['low']:+.3f}, {score['high']:+.3f}] "
+            f"p={score['p_value']:.3g}"
+        )
     console.print(f"Wrote {path}")
 
 

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from ai_eval.models import CaseOutcome, EvalCase, EvalRunSummary, RunExport, ScoreResult
+from ai_eval.stats import compare_significance
 from ai_eval.store import RunStore
 
 
@@ -143,7 +144,9 @@ def compare_runs(
     score_drop_threshold: float = 0.1,
 ) -> dict:
     """Diff two runs. A regression is a case that flipped pass->fail, or (still passing/failing)
-    whose mean score dropped by more than `score_drop_threshold`."""
+    whose mean score dropped by more than `score_drop_threshold`. ``significance`` holds a McNemar
+    test on pass/fail flips and paired-bootstrap CIs and p-values for the pass-rate and mean-score
+    deltas (see ``ai_eval.stats.compare_significance``)."""
     b_map = {o.case_id: o for o in baseline_outcomes}
     c_map = {o.case_id: o for o in candidate_outcomes}
 
@@ -179,6 +182,8 @@ def compare_runs(
         "missing_in_candidate": sorted(set(b_map) - set(c_map)),
         "new_in_candidate": sorted(set(c_map) - set(b_map)),
         "scorer_mean_deltas": scorer_deltas,
+        # Paired tests over the cases present in both runs: is the change more than noise?
+        "significance": compare_significance(baseline_outcomes, candidate_outcomes).model_dump(),
     }
     if baseline_cases is not None and candidate_cases is not None:
         b_tags = _tag_pass_rates(baseline_outcomes, baseline_cases)

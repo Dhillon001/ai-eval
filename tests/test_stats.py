@@ -8,7 +8,16 @@ import pytest
 
 from ai_eval.models import CaseOutcome, RunResult, ScoreResult
 from ai_eval.runner import merge_samples
-from ai_eval.stats import ConfidenceInterval, bootstrap_ci, mean_score_ci, pass_rate_ci, quantile
+from ai_eval.stats import (
+    ConfidenceInterval,
+    bootstrap_ci,
+    compare_significance,
+    mcnemar_test,
+    mean_score_ci,
+    paired_bootstrap,
+    pass_rate_ci,
+    quantile,
+)
 
 
 def _outcome(*scores: float, case_id: str = "c", error: str | None = None) -> CaseOutcome:
@@ -210,3 +219,36 @@ def test_cis_are_seeded_and_reproducible():
     outcomes = [_outcome(i / 10, case_id=str(i)) for i in range(11)]
     assert mean_score_ci(outcomes, seed=3) == mean_score_ci(outcomes, seed=3)
     assert pass_rate_ci(outcomes, seed=3) == pass_rate_ci(outcomes, seed=3)
+
+
+# --- paired significance -----------------------------------------------------------------------
+
+
+def test_mcnemar_exact_values():
+    assert mcnemar_test(0, 0, 10).p_value == 1.0
+    assert mcnemar_test(6, 0).p_value == pytest.approx(2 / 2**6)
+    assert mcnemar_test(10, 2).p_value == pytest.approx(2 * (1 + 12 + 66) / 2**12)
+    assert mcnemar_test(3, 3).p_value == 1.0  # symmetric flips: capped at 1
+    r = mcnemar_test(2, 1, n_pairs=20)
+    assert (r.n_pairs, r.discordant) == (20, 3)
+    with pytest.raises(ValueError):
+        mcnemar_test(5, 5, n_pairs=4)
+
+
+def test_paired_bootstrap_identical_runs():
+    d = paired_bootstrap([0.0] * 12)
+    assert d.estimate == d.low == d.high == 0.0
+    assert d.p_value == 1.0
+
+
+def test_compare_significance_pairs_by_case_id():
+    base = [_outcome(1.0, case_id=f"c{i}") for i in range(10)] + [_outcome(1.0, case_id="only_base")]
+    cand = [_outcome(0.0 if i < 6 else 1.0, case_id=f"c{i}") for i in range(10)]
+    sig = compare_significance(base, cand)
+    assert sig.n_pairs == 10
+    assert (sig.mcnemar.regressions, sig.mcnemar.improvements) == (6, 0)
+    assert sig.pass_rate_delta is not None and sig.pass_rate_delta.estimate == pytest.approx(-0.6)
+    assert sig.score_delta is not None and sig.score_delta.high < 0
+    assert sig.score_delta.p_value < 0.05
+    empty = compare_significance(base, [])
+    assert empty.n_pairs == 0 and empty.score_delta is None and empty.mcnemar.p_value == 1.0
