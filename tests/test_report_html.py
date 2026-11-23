@@ -180,7 +180,7 @@ def test_compare_report_has_expected_sections(tmp_path: Path):
     a = _export("runA", [ok], [ok_case])
     b = _export("runB", [ok], [ok_case])
     doc = write_compare_report(a, b, tmp_path / "c.html").read_text()
-    assert _parse(doc).headings == ["Run comparison", "By scorer", "By tag", "Cases"]
+    assert _parse(doc).headings == ["Run comparison", "Significance", "By scorer", "By tag", "Cases"]
     assert "<table class='diff cases'>" in doc and "<tr class='unchanged'>" in doc
     assert re.search(r"Regression: 0 \| Score drop: 0 \| Improvement: 0 \| Missing in B: 0 \| "
                      r"New in B: 0 \| Unchanged: 1", doc)

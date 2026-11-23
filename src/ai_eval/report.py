@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from ai_eval.models import CaseOutcome, EvalCase, EvalRunSummary, RunExport, ScoreResult
-from ai_eval.stats import compare_significance
+from ai_eval.stats import ConfidenceInterval, compare_significance, mean_score_ci, pass_rate_ci
 from ai_eval.store import RunStore
 
 
@@ -26,6 +26,9 @@ _BASE_CSS = """\
     .badge { font-size: 0.75rem; border-radius: 4px; padding: 0.1rem 0.4rem; margin-left: 0.25rem; }
     .badge.pass { background: #e3f6e3; }
     .badge.fail { background: #fbe0e0; }
+    .badge.flaky { background: #fff1c2; color: #7a5a00; font-weight: 600; }
+    .badge.samples { background: #eef0f4; color: #444; }
+    .ci { color: #666; font-size: 0.8rem; white-space: nowrap; }
     .field { margin: 0.5rem 0; }
     .flabel { font-size: 0.8rem; color: #555; text-transform: uppercase; }
     .field pre { background: #f7f7f7; padding: 0.4rem; border-radius: 4px; }
@@ -38,6 +41,7 @@ _BASE_CSS = """\
     .card .value { font-size: 1.6rem; font-weight: 600; margin: 0.2rem 0; }
     .card .sub { font-size: 0.8rem; color: #666; }
     .card.bad { border-color: #d33; background: #fff0f0; }
+    .card.warn { border-color: #d9a400; background: #fffbea; }
     table.tags { width: auto; margin-bottom: 1.5rem; }
 """
 
@@ -90,12 +94,43 @@ def _tag_stats(outcomes: list[CaseOutcome], cases: dict[str, EvalCase]) -> list[
     return rows
 
 
-def _summary_cards(summary: EvalRunSummary) -> str:
+def _pct_ci(ci: ConfidenceInterval) -> str:
+    return f"{ci.level:.0%} CI {ci.low:.1%}–{ci.high:.1%}"
+
+
+def _score_ci(ci: ConfidenceInterval) -> str:
+    return f"{ci.level:.0%} CI {ci.low:.3f}–{ci.high:.3f}"
+
+
+def _flaky_badge(o: CaseOutcome) -> str:
+    """``flaky k/n`` when repeated samples disagree, ``k/n samples`` for other repeated cases,
+    nothing for single-sample cases."""
+    if o.repeats <= 1:
+        return ""
+    k, n = o.passed_samples, o.repeats
+    if o.flaky:
+        return (
+            f"<span class='badge flaky' title='samples disagree across repeats'>"
+            f"flaky {k}/{n}</span>"
+        )
+    return f"<span class='badge samples'>{k}/{n} samples</span>"
+
+
+def _summary_cards(summary: EvalRunSummary, outcomes: list[CaseOutcome]) -> str:
     m = summary.metadata
     cost = m.get("cost_usd")
+    pr_ci, ms_ci = pass_rate_ci(outcomes), mean_score_ci(outcomes)
     cards = [
-        ("Pass rate", f"{summary.pass_rate:.1%}", f"{summary.passed}/{summary.total} cases"),
-        ("Mean score", f"{summary.mean_score:.3f}", "across all scorers"),
+        (
+            "Pass rate",
+            f"{summary.pass_rate:.1%}",
+            f"{summary.passed}/{summary.total} cases" + (f" · {_pct_ci(pr_ci)}" if outcomes else ""),
+        ),
+        (
+            "Mean score",
+            f"{summary.mean_score:.3f}",
+            _score_ci(ms_ci) if outcomes else "across all scorers",
+        ),
         ("Errors", str(m.get("errors", 0)), "adapter or scorer errors"),
         (
             "Latency p50 / p95",
@@ -112,9 +147,15 @@ def _summary_cards(summary: EvalRunSummary) -> str:
             ),
         ),
     ]
+    repeats = max((o.repeats for o in outcomes), default=1)
+    if repeats > 1:
+        n_flaky = sum(1 for o in outcomes if o.flaky)
+        cards.append(("Flaky cases", str(n_flaky), f"mixed outcomes across up to {repeats} repeats"))
     out = []
     for label, value, sub in cards:
         cls = " bad" if label == "Errors" and m.get("errors") else ""
+        if label == "Flaky cases" and value != "0":
+            cls = " warn"
         out.append(
             f"<div class='card{cls}'><div class='label'>{html.escape(label)}</div>"
             f"<div class='value'>{html.escape(value)}</div><div class='sub'>{html.escape(sub)}</div></div>"
@@ -264,7 +305,7 @@ def _case_details(outcome: CaseOutcome, case: EvalCase | None) -> str:
         f"<details class='case {status}'{open_attr}><summary>"
         f"<span class='status'>{status}</span> <code>{html.escape(outcome.case_id)}</code>"
         f" <span class='mean'>score {_case_score(outcome):.2f}</span>"
-        f" <span class='lat'>{outcome.run.latency_ms:.0f} ms</span> {badges}</summary>"
+        f" <span class='lat'>{outcome.run.latency_ms:.0f} ms</span> {_flaky_badge(outcome)} {badges}</summary>"
         f"<div class='body'>{''.join(body)}</div></details>"
     )
 
@@ -277,6 +318,8 @@ def write_html_report(
 ) -> Path:
     ordered = _order_failures_first(outcomes)
     n_fail = sum(1 for o in outcomes if not o.passed)
+    n_flaky = sum(1 for o in outcomes if o.flaky)
+    flaky_note = f" {n_flaky} case(s) are flaky (samples disagree across repeats)." if n_flaky else ""
     case_blocks = "".join(_case_details(o, cases.get(o.case_id)) for o in ordered)
 
     doc = f"""<!DOCTYPE html>
@@ -291,10 +334,10 @@ def write_html_report(
   <h1>Run {html.escape(summary.run_id)}</h1>
   <p>Suite: {html.escape(summary.suite_name)} | Adapter: {html.escape(summary.adapter)}
   | Model: {html.escape(summary.model or "-")}</p>
-  {_summary_cards(summary)}
+  {_summary_cards(summary, outcomes)}
   {_tag_table(outcomes, cases)}
   <h2>Cases</h2>
-  <p>{n_fail} failing case(s) shown first and expanded; passing cases are collapsed.</p>
+  <p>{n_fail} failing case(s) shown first and expanded; passing cases are collapsed.{flaky_note}</p>
   {case_blocks}
 </body>
 </html>
@@ -378,7 +421,8 @@ def _fmt_delta(
     return f"<span class='delta {'up' if good else 'down'}'>{sign}{prefix}{format(abs(delta), fmt)}{unit}</span>"
 
 
-def _compare_cards(a: EvalRunSummary, b: EvalRunSummary) -> str:
+def _compare_cards(baseline: RunExport, candidate: RunExport) -> str:
+    a, b = baseline.summary, candidate.summary
     am, bm = a.metadata, b.metadata
 
     def num(m: dict, key: str) -> float | None:
@@ -410,13 +454,23 @@ def _compare_cards(a: EvalRunSummary, b: EvalRunSummary) -> str:
         _fmt_delta(diff(a_cost, b_cost), ".4f", higher_is_better=False, prefix="$"),
         0.0,
     ))
+    # Per-run CIs under the headline cards: overlapping intervals are a hint the gap is noise.
+    ci_lines: dict[str, str] = {}
+    if baseline.outcomes and candidate.outcomes:
+        ci_lines["Pass rate"] = (
+            f"A {_pct_ci(pass_rate_ci(baseline.outcomes))} · B {_pct_ci(pass_rate_ci(candidate.outcomes))}"
+        )
+        ci_lines["Mean score"] = (
+            f"A {_score_ci(mean_score_ci(baseline.outcomes))} · B {_score_ci(mean_score_ci(candidate.outcomes))}"
+        )
     out = []
     for label, av, bv, delta_html, goodness in rows:
         cls = " bad" if goodness < -1e-9 else (" good" if goodness > 1e-9 else "")
+        ci_html = f"<div class='ci'>{html.escape(ci_lines[label])}</div>" if label in ci_lines else ""
         out.append(
             f"<div class='card{cls}'><div class='label'>{html.escape(label)}</div>"
             f"<div class='value'>{html.escape(av)} → {html.escape(bv)}</div>"
-            f"<div class='sub'>{delta_html}</div></div>"
+            f"<div class='sub'>{delta_html}</div>{ci_html}</div>"
         )
     return f"<section class='cards'>{''.join(out)}</section>"
 
@@ -450,7 +504,7 @@ def _side_cell(o: CaseOutcome | None) -> str:
     if o is None:
         return "<td class='num'>—</td><td class='num'>—</td>"
     status = "error" if o.run.error else ("pass" if o.passed else "fail")
-    return f"<td class='num'>{status}</td><td class='num'>{_case_score(o):.2f}</td>"
+    return f"<td class='num'>{status} {_flaky_badge(o)}</td><td class='num'>{_case_score(o):.2f}</td>"
 
 
 def _side_output(label: str, o: CaseOutcome | None) -> str:
@@ -529,6 +583,53 @@ def _tag_diff_table(baseline: RunExport, candidate: RunExport) -> str:
     )
 
 
+def _p(p: float) -> str:
+    return "&lt;0.001" if p < 0.001 else f"{p:.3f}"
+
+
+def _significance_table(sig: dict) -> str:
+    """Paired tests from ``compare_runs()['significance']``: is the change more than noise?"""
+    level = sig["level"]
+    alpha = 1.0 - level
+    n = sig["n_pairs"]
+    if not n:
+        return "<h2>Significance</h2><p>No cases in common; nothing to test.</p>"
+
+    def verdict(p: float, direction: float) -> str:
+        if p >= alpha:
+            return "<span class='delta flat'>not significant — could be noise</span>"
+        word, cls = ("regression", "down") if direction < 0 else ("improvement", "up")
+        return f"<span class='delta {cls}'>significant {word} (p &lt; {alpha:g})</span>"
+
+    rows = []
+    for key, label, scale, fmt, unit in (
+        ("pass_rate_delta", "Pass rate Δ", 100.0, ".1f", " pts"),
+        ("score_delta", "Mean score Δ", 1.0, ".3f", ""),
+    ):
+        d = sig.get(key)
+        if not d:
+            continue
+        lo, hi = d["low"] * scale, d["high"] * scale
+        rows.append(
+            f"<tr><td>{label}</td><td class='num'>{_fmt_delta(d['estimate'] * scale, fmt, unit=unit)}</td>"
+            f"<td class='num'>[{lo:+{fmt}}, {hi:+{fmt}}]{unit}</td>"
+            f"<td class='num'>{_p(d['p_value'])}</td><td>{verdict(d['p_value'], d['estimate'])}</td></tr>"
+        )
+    mc = sig["mcnemar"]
+    rows.append(
+        f"<tr><td>Pass/fail flips (McNemar)</td>"
+        f"<td class='num'>{mc['regressions']} regressed / {mc['improvements']} improved</td>"
+        f"<td class='num'>—</td><td class='num'>{_p(mc['p_value'])}</td><td>{verdict(mc['p_value'], mc['improvements'] - mc['regressions'])}</td></tr>"
+    )
+    return (
+        f"<h2>Significance</h2><p>Paired tests over {n} case(s) present in both runs; "
+        f"{level:.0%} confidence intervals.</p>"
+        "<table class='diff tags significance'><thead><tr><th>Metric</th><th>Change</th>"
+        f"<th>{level:.0%} CI</th><th>p-value</th><th>Verdict</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
 def _run_label(s: EvalRunSummary) -> str:
     return f"{s.run_id} · {s.adapter}" + (f" / {s.model}" if s.model else "") + f" · {s.suite_name}"
 
@@ -564,8 +665,9 @@ def write_compare_report(baseline: RunExport, candidate: RunExport, out_path: Pa
   <p><b>A (baseline):</b> {html.escape(_run_label(a))}<br/>
   <b>B (candidate):</b> {html.escape(_run_label(b))}</p>
   {warn}
-  {_compare_cards(a, b)}
+  {_compare_cards(baseline, candidate)}
   <p class='counts'>{count_line}</p>
+  {_significance_table(diff['significance'])}
   {_scorer_diff_table(baseline, candidate)}
   {_tag_diff_table(baseline, candidate)}
   <h2>Cases</h2>
