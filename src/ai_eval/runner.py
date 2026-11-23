@@ -102,6 +102,13 @@ def run_stats(outcomes: list[CaseOutcome]) -> dict:
         stats["samples"] = len(samples)
         stats["sample_pass_rate"] = round(sum(o.passed_samples for o in outcomes) / len(samples), 6) if samples else 0.0
         stats["mean_consistency"] = round(sum(o.consistency for o in outcomes) / n, 6) if n else 0.0
+        # Flaky cases: repeats disagree, so their verdict could flip on a re-run.
+        flaky = [o for o in outcomes if o.flaky]
+        stats["flaky_count"] = len(flaky)
+        stats["flaky_cases"] = [
+            {"case_id": o.case_id, "passed_samples": o.passed_samples, "repeats": o.repeats, "passed": o.passed}
+            for o in flaky
+        ]
     return stats
 
 

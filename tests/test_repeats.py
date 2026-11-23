@@ -65,6 +65,22 @@ def test_majority_pass_rate_and_consistency(passes, passed, rate, consistency):
     assert o.consistency == pytest.approx(consistency)
 
 
+@pytest.mark.parametrize(
+    "passes, flaky",
+    [
+        ((True,), False),
+        ((True, True, True), False),
+        ((False, False), False),
+        ((True, False, True), True),
+        ((False, True), True),
+        ((False, False, True), True),
+    ],
+)
+def test_flaky_means_mixed_outcomes(passes, flaky):
+    o = _sample(passes[0]) if len(passes) == 1 else _repeated(*passes)
+    assert o.flaky is flaky
+
+
 def test_sample_without_scores_passes_unless_errored():
     assert CaseSample(run=RunResult(case_id="c", output="x")).passed
     assert not CaseSample(run=RunResult(case_id="c", output="", error="boom")).passed
@@ -104,6 +120,7 @@ def test_merge_keeps_first_on_top_and_all_samples_in_order():
 def test_run_stats_without_repeats_has_no_sample_keys():
     st = run_stats([_sample(True), _sample(False)])
     assert "samples" not in st and "sample_pass_rate" not in st and "mean_consistency" not in st
+    assert "flaky_count" not in st and "flaky_cases" not in st
 
 
 def test_run_stats_covers_every_sample():
@@ -122,6 +139,26 @@ def test_run_stats_mixed_repeated_and_single_outcomes():
     assert st["samples"] == 4
     assert st["sample_pass_rate"] == pytest.approx(0.75)
     assert st["mean_consistency"] == pytest.approx((2 / 3 + 1.0) / 2, abs=1e-6)
+
+
+def test_run_stats_lists_flaky_cases_in_order():
+    st = run_stats([
+        _repeated(True, False, True, case_id="a"),
+        _repeated(True, True, True, case_id="b"),
+        _repeated(False, False, True, case_id="c"),
+        _repeated(False, False, False, case_id="d"),
+        _sample(False),
+    ])
+    assert st["flaky_count"] == 2
+    assert st["flaky_cases"] == [
+        {"case_id": "a", "passed_samples": 2, "repeats": 3, "passed": True},
+        {"case_id": "c", "passed_samples": 1, "repeats": 3, "passed": False},
+    ]
+
+
+def test_run_stats_no_flaky_cases_when_repeats_agree():
+    st = run_stats([_repeated(True, True), _repeated(False, False)])
+    assert st["flaky_count"] == 0 and st["flaky_cases"] == []
 
 
 def test_run_stats_sums_tokens_across_samples():
@@ -216,6 +253,9 @@ def test_flaky_cases_majority_and_summary(tmp_path, monkeypatch, concurrency):
     assert m["repeats"] == 3 and m["samples"] == 9
     assert m["sample_pass_rate"] == pytest.approx(6 / 9, abs=1e-6)
     assert m["mean_consistency"] == pytest.approx((2 / 3 + 2 / 3 + 1) / 3, abs=1e-6)
+    assert m["flaky_count"] == 2
+    assert [f["case_id"] for f in m["flaky_cases"]] == ["refund-1", "greeting-1"]
+    assert [o.case_id for o in outcomes if o.flaky] == ["refund-1", "greeting-1"]
     # Mean score averages every sample's scores, not just the first sample's.
     assert summary.mean_score == pytest.approx(
         sum(s.score for o in outcomes for smp in o.samples for s in smp.scores)
@@ -250,7 +290,7 @@ def test_samples_round_trip_through_store_and_run_file(tmp_path, monkeypatch):
     assert not loaded["greeting-1"].passed and loaded["greeting-1"].passed_samples == 1
 
 
-def test_cli_run_with_repeats(tmp_path, monkeypatch):
+def _cli_project(tmp_path, monkeypatch):
     # The CLI stores runs under the cwd, so run it from a throwaway project copy.
     (tmp_path / "configs").mkdir()
     (tmp_path / "configs" / "s.yaml").write_text(SUITE.read_text(encoding="utf-8"), encoding="utf-8")
@@ -260,14 +300,27 @@ def test_cli_run_with_repeats(tmp_path, monkeypatch):
         (ROOT / "datasets" / "examples" / "chat_v1.jsonl").read_text(encoding="utf-8"), encoding="utf-8"
     )
     monkeypatch.chdir(tmp_path)
+
+
+def test_cli_run_with_repeats(tmp_path, monkeypatch):
+    _cli_project(tmp_path, monkeypatch)
     _Flaky(monkeypatch, {"greeting-1": 2})
     result = CliRunner().invoke(app, ["run", "--suite", "configs/s.yaml", "--repeats", "3", "--no-cache"])
     assert result.exit_code == 0, result.output
     assert "Pass rate: 2/3" in result.output
     assert "Repeats: 3 per case" in result.output
     assert "sample pass rate: 77.8%" in result.output  # 7 of 9 samples
+    assert "Flaky cases: 1/3" in result.output
+    assert "greeting-1: 1/3 samples passed (fail)" in result.output
     run = RunStore.default(tmp_path).list_runs(limit=1)[0]
     assert run.metadata["repeats"] == 3 and run.metadata["samples"] == 9
+
+
+def test_cli_run_reports_no_flaky_cases(tmp_path, monkeypatch):
+    _cli_project(tmp_path, monkeypatch)
+    result = CliRunner().invoke(app, ["run", "--suite", "configs/s.yaml", "--repeats", "2", "--no-cache"])
+    assert result.exit_code == 0, result.output
+    assert "Flaky cases: 0" in result.output
 
 
 def test_cli_rejects_zero_repeats():

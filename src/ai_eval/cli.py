@@ -7,6 +7,7 @@ from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
@@ -77,6 +78,14 @@ def run(
             f"Repeats: {repeats} per case | sample pass rate: {m.get('sample_pass_rate', 0):.1%} | "
             f"mean consistency: {m.get('mean_consistency', 0):.1%}"
         )
+        flaky = m.get("flaky_cases") or []
+        if flaky:
+            console.print(f"[yellow]Flaky cases: {len(flaky)}/{summary.total} (mixed outcomes across repeats)[/yellow]")
+            for f in flaky:
+                verdict = "pass" if f["passed"] else "fail"
+                console.print(f"  - {escape(f['case_id'])}: {f['passed_samples']}/{f['repeats']} samples passed ({verdict})")
+        else:
+            console.print("Flaky cases: 0")
     console.print(
         f"Errors: {m.get('errors', 0)} | latency p50/p95: {m.get('latency_ms_p50', 0):.0f}/"
         f"{m.get('latency_ms_p95', 0):.0f} ms"

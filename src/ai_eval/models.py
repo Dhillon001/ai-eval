@@ -103,6 +103,12 @@ class CaseOutcome(BaseModel):
         return max(k, n - k) / n
 
     @property
+    def flaky(self) -> bool:
+        """True when repeated samples disagree: at least one passed and at least one failed.
+        A single run is never flaky."""
+        return self.repeats > 1 and 0 < self.passed_samples < self.repeats
+
+    @property
     def passed(self) -> bool:
         if self.samples:
             return self.passed_samples * 2 > len(self.samples)
