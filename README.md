@@ -218,6 +218,94 @@ Change a tool description, rename a parameter or swap the model, run again, and 
 
 ---
 
+## 📊 Statistical rigor
+
+### Why eval numbers are noisy
+
+An eval score is a measurement, and it wobbles for two separate reasons:
+
+- **The model is random.** At temperature > 0 (and often even at 0) the same prompt gives different answers, and an LLM judge adds its own randomness on top. Run the suite twice without changing anything and a few cases can flip.
+- **The suite is small.** 25 cases are a sample of everything your users will ask. 20/25 passing does not mean the system is "80% good" — another 25 equally reasonable questions could easily have scored 72% or 88%.
+
+So "pass rate went from 84% to 80%" can be a real regression **or nothing at all**. ai-eval gives you the tools to tell the two apart.
+
+### Repeats: measure the model's randomness
+
+```bash
+ai-eval run --suite configs/example_suite.yaml --repeats 5
+# Pass rate: 3/3 (100.0%) | mean score: 1.000
+# Repeats: 5 per case | sample pass rate: 100.0% | mean consistency: 100.0%
+# Flaky cases: 0
+```
+
+With `--repeats N` every case runs N times and every sample is stored. A case **passes on a strict majority** of its samples (3 of 5), so one unlucky answer does not fail it. Per case you get:
+
+| number | meaning |
+|---|---|
+| sample pass rate | share of all samples that passed (finer-grained than the case pass rate) |
+| consistency | share of a case's samples that agree with its majority — 1.0 is stable, 0.5 is a coin flip |
+| **flaky** | the samples disagree (at least one passed and one failed); its verdict could flip on the next run |
+
+Flaky cases are listed in the CLI output and get a yellow `flaky k/n` badge in the HTML report. Treat them as a to-do list: the prompt is ambiguous, the expected answer is too strict, or the judge criterion is vague. Repeats multiply cost by N, so use 3–5 on the cases you care about, not on every CI push.
+
+### Confidence intervals: how much to trust a number
+
+Every HTML report shows a 95% confidence interval (CI) next to the pass rate and mean score. It is a [percentile bootstrap](https://en.wikipedia.org/wiki/Bootstrapping_(statistics)): resample the cases with replacement 2,000 times, recompute the metric each time, and take the middle 95%. A case's repeats are resampled together, and the resampling is seeded, so the same run always gives the same interval.
+
+Read it as "**the true pass rate is very likely somewhere in this range**". The same 80% means very different things at different suite sizes:
+
+| result | 95% CI | what you can say |
+|---|---|---|
+| 20/25 passed (80%) | 64% – 96% | rough idea; a 5-point change means nothing |
+| 40/50 passed (80%) | 68% – 90% | better |
+| 160/200 passed (80%) | 74% – 86% | precise enough to track small changes |
+
+The width shrinks roughly with √n: **4× the cases for half the width**. If two runs' intervals overlap heavily, don't read much into the difference — but to actually decide, use the paired test below, which is much more sensitive than eyeballing two intervals.
+
+### p-values: is the change in `compare` real?
+
+Two runs of the same suite are **paired** — every case appears in both — so `compare` looks at what changed case by case, which cancels out "some cases are just hard":
+
+- **Pass/fail flips → exact McNemar test.** Only cases that flipped carry information. If nothing really changed, each flip is equally likely to go either way (a fair coin), and the p-value is how surprising the observed split is under that coin.
+- **Score changes → paired bootstrap.** Resample the per-case score deltas (candidate − baseline) and report the mean delta, its CI, and a p-value.
+
+```
+Regressions: 6 | score drops: 10 | improvements: 0 | pass rate 88.0% -> 64.0%
+Significance (25 paired cases): McNemar p=0.0312 | score delta -0.118 [-0.194, -0.046] p=0.002
+```
+
+**The p-value is the chance of seeing a change at least this big if the system had not changed at all.** Small p (below your α, usually 0.05) means "unlikely to be noise". It is *not* the probability that the change is real, and a big p does not prove nothing changed — only that this suite cannot tell. A score-delta CI that does not include 0 says the same thing as p < α, and also tells you *how big* the effect is.
+
+How many flips it takes (all in the same direction, two-sided McNemar):
+
+| regressions → improvements | p-value | significant at 0.05? |
+|---|---|---|
+| 3 → 0 | 0.25 | no — could be noise |
+| 5 → 0 | 0.0625 | no, borderline |
+| 6 → 0 | 0.031 | yes |
+| 6 → 2 | 0.29 | no — flips in both directions look like noise |
+
+This is why small suites can never prove a small regression: with 5 cases, even 5 of 5 flipping is not significant at 0.05. Add cases (or repeats, to stabilize each verdict) until the change you care about is detectable.
+
+### Gating CI on real regressions
+
+By default `compare` is strict: **any** regression exits 1. That is right for deterministic suites like the mock example. For live models, where a case or two flips every run, gate on significance and size instead:
+
+```bash
+ai-eval compare --baseline-file baseline.json --candidate-file candidate.json \
+  --fail-on-score-drop --alpha 0.05 --min-effect 0.02
+```
+
+- `--alpha 0.05` — fail only if the drop is statistically significant (McNemar for regressions, paired bootstrap for score drops).
+- `--min-effect 0.02` — fail only if the net drop is at least 2 points of pass rate (or 0.02 mean score), so a significant-but-tiny change on a huge suite doesn't block a merge.
+- A net improvement never fails, even if a few individual cases regressed.
+
+Waived regressions are not hidden: the JSON output's `gate` block lists what failed under `reasons` and what was waived (and why) under `ignored`. In the GitHub regression gate, set the repository variables `EVAL_GATE_ALPHA` and/or `EVAL_GATE_MIN_EFFECT` to turn this on.
+
+> **Rule of thumb:** a 5-point drop on a 25-case suite is usually noise; the same drop on 200 cases usually isn't. When in doubt, add cases before you add statistics.
+
+---
+
 ## 📚 More
 
 Adapters, cost tracking, retries, the judge cache, benchmarks and every command are in the **[full reference](docs/REFERENCE.md)**.

@@ -25,7 +25,7 @@ Tests never hit real networks or API keys — use fakes in `tests/fakes.py` / in
 - [x] 16. Core: flaky-case detection (mixed outcomes across repeats) in run summary and CLI output.
 - [x] 17. Report: CIs and flaky badges in the run and comparison HTML reports; tests.
 - [x] 18. Wiring: `compare --alpha` / `--min-effect` so only significant regressions fail; CI regression gate uses them.
-- [ ] 19. Docs: README "Statistical rigor" section (why evals are noisy, how to read CIs and p-values).
+- [x] 19. Docs: README "Statistical rigor" section (why evals are noisy, how to read CIs and p-values).
 
 ## Judge calibration
 - [ ] 20. Core: human label support — `human_label` (pass + optional score) on cases or a separate labels JSONL keyed by case id; loader + validation.
