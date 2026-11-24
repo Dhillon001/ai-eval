@@ -3,7 +3,21 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+
+
+class HumanLabel(BaseModel):
+    """A human verdict on a case, used to calibrate the LLM judge (``ai-eval calibrate``).
+
+    ``passed`` is required (``pass`` is accepted as an alias); ``score`` is an optional 0–1 grade
+    for correlating with judge scores; ``notes`` is free text for the labeler's reasoning.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    passed: bool = Field(validation_alias=AliasChoices("passed", "pass"))
+    score: float | None = Field(default=None, ge=0.0, le=1.0)
+    notes: str | None = None
 
 
 class EvalCase(BaseModel):
@@ -20,6 +34,9 @@ class EvalCase(BaseModel):
       (defaults to the number of ``expected_tools``).
     - ``mock_retrieved_ids`` / ``mock_tool_calls``: emitted into the trace by the ``mock``
       adapter so retrieval and agent suites run offline.
+
+    ``human_label`` is an optional human verdict for judge calibration; it can also be supplied
+    from a separate labels JSONL (see ``ai_eval.dataset.load_labels``).
     """
 
     id: str
@@ -28,6 +45,7 @@ class EvalCase(BaseModel):
     expected: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     checks: list[str] = Field(default_factory=list)
+    human_label: HumanLabel | None = None
 
 
 class RunResult(BaseModel):
