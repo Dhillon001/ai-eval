@@ -81,11 +81,22 @@ jobs:
             --save-baseline "$RUNNER_TEMP/candidate.json"
       - name: Compare (fail on regressions or score drops)
         working-directory: head
+        # Noise-aware gating: set the repository variables EVAL_GATE_ALPHA (e.g. 0.05) and/or
+        # EVAL_GATE_MIN_EFFECT (e.g. 0.02) so only significant, large-enough drops fail. Leave
+        # them unset for the deterministic mock suite: with only a few cases no single
+        # regression can reach significance, so the strict default (any regression fails) is
+        # the right gate there.
+        env:
+          GATE_ALPHA: ${{ vars.EVAL_GATE_ALPHA }}
+          GATE_MIN_EFFECT: ${{ vars.EVAL_GATE_MIN_EFFECT }}
         run: |
+          args=()
+          if [ -n "$GATE_ALPHA" ]; then args+=(--alpha "$GATE_ALPHA"); fi
+          if [ -n "$GATE_MIN_EFFECT" ]; then args+=(--min-effect "$GATE_MIN_EFFECT"); fi
           ai-eval compare \
             --baseline-file "$RUNNER_TEMP/baseline.json" \
             --candidate-file "$RUNNER_TEMP/candidate.json" \
-            --fail-on-score-drop
+            --fail-on-score-drop "${args[@]}"
       - name: Upload run files
         if: always()
         uses: actions/upload-artifact@v4

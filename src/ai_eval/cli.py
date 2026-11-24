@@ -13,7 +13,7 @@ from rich.table import Table
 
 from ai_eval.bench import BENCH_COLUMNS, bench_cells, format_markdown, parse_system_spec, run_bench
 from ai_eval.models import RunExport
-from ai_eval.report import compare_exports, generate_report, write_compare_report
+from ai_eval.report import compare_exports, generate_report, regression_gate, write_compare_report
 from ai_eval.runner import run_suite
 from ai_eval.store import RunStore, load_run_file, save_run_file
 
@@ -274,14 +274,33 @@ def compare(
         None, "--candidate-file", help="Candidate run JSON written by `run --save-baseline`"
     ),
     fail_on_score_drop: bool = typer.Option(False, "--fail-on-score-drop", help="Also exit 1 on score drops"),
+    alpha: Optional[float] = typer.Option(
+        None, "--alpha", min=0.0, max=1.0,
+        help="Only fail when the drop is statistically significant (p < ALPHA; McNemar for "
+        "pass/fail flips, paired bootstrap for score)",
+    ),
+    min_effect: Optional[float] = typer.Option(
+        None, "--min-effect", min=0.0,
+        help="Only fail when the net drop is at least this big (pass rate as a fraction for "
+        "regressions, mean score for score drops)",
+    ),
 ):
-    """Diff two runs (from the local store or exported JSON files). Exit 1 on regressions."""
+    """Diff two runs (from the local store or exported JSON files). Exit 1 on regressions.
+
+    With --alpha / --min-effect, regressions that are within noise or too small are reported
+    but do not fail; see the "gate" key in the output.
+    """
+    if alpha is not None and alpha <= 0.0:
+        raise typer.BadParameter("--alpha must be in (0, 1]")
     store = RunStore.default(_project_root())
     b = _resolve_run(store, baseline, baseline_file, "baseline")
     c = _resolve_run(store, candidate, candidate_file, "candidate")
     data = compare_exports(b, c)
+    data["gate"] = regression_gate(
+        data, fail_on_score_drop=fail_on_score_drop, alpha=alpha, min_effect=min_effect
+    )
     console.print(json.dumps(data, indent=2))
-    if data.get("regressions") or (fail_on_score_drop and data.get("score_drops")):
+    if data["gate"]["failed"]:
         raise typer.Exit(code=1)
 
 

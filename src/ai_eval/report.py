@@ -235,6 +235,73 @@ def compare_runs(
     return result
 
 
+def regression_gate(
+    diff: dict,
+    *,
+    fail_on_score_drop: bool = False,
+    alpha: float | None = None,
+    min_effect: float | None = None,
+) -> dict:
+    """Decide whether a ``compare_runs`` diff should fail a CI gate.
+
+    Without ``alpha`` / ``min_effect`` any regression (and, with ``fail_on_score_drop``, any
+    per-case score drop) fails. With them, regressions and score drops still trigger the check,
+    but the gate only fails when the run-level change is a real, large-enough drop:
+
+    - ``alpha``: the paired test must be significant (``p < alpha``) — McNemar for pass/fail
+      flips, paired bootstrap for the mean-score delta.
+    - ``min_effect``: the net drop must be at least this big — pass rate (as a fraction) for
+      regressions, mean score for score drops.
+
+    Both also require the net change to point the wrong way, so a few regressions outweighed by
+    improvements never fail. Returns ``{"failed", "reasons", "ignored", "alpha", "min_effect",
+    "fail_on_score_drop"}``; ``ignored`` explains triggers that were waived as noise or too small.
+    """
+    if alpha is not None and not 0.0 < alpha <= 1.0:
+        raise ValueError(f"alpha must be in (0, 1], got {alpha}")
+    if min_effect is not None and min_effect < 0:
+        raise ValueError(f"min_effect must be >= 0, got {min_effect}")
+    strict = alpha is None and min_effect is None
+    sig = diff.get("significance") or {}
+    reasons: list[str] = []
+    ignored: list[str] = []
+
+    def check(what: str, count: int, p_value: float | None, delta: dict | None) -> None:
+        if strict:
+            reasons.append(f"{count} {what}")
+            return
+        estimate = delta["estimate"] if delta else 0.0
+        why: list[str] = []
+        if estimate >= 0:
+            why.append(f"net delta {estimate:+.3f} is not a drop")
+        if alpha is not None and (p_value is None or p_value >= alpha):
+            why.append(f"p={p_value if p_value is not None else 1.0:.3g} >= alpha {alpha:g}")
+        if min_effect is not None and -estimate < min_effect - 1e-9:
+            why.append(f"drop {max(-estimate, 0.0):.3f} < min effect {min_effect:g}")
+        p_txt = f", p={p_value:.3g}" if p_value is not None else ""
+        if why:
+            ignored.append(f"{count} {what} ({'; '.join(why)})")
+        else:
+            reasons.append(f"{count} {what} (net delta {estimate:+.3f}{p_txt})")
+
+    if diff.get("regressions"):
+        check(
+            "regression(s)", len(diff["regressions"]),
+            (sig.get("mcnemar") or {}).get("p_value"), sig.get("pass_rate_delta"),
+        )
+    if fail_on_score_drop and diff.get("score_drops"):
+        score = sig.get("score_delta")
+        check("score drop(s)", len(diff["score_drops"]), score["p_value"] if score else None, score)
+    return {
+        "failed": bool(reasons),
+        "reasons": reasons,
+        "ignored": ignored,
+        "alpha": alpha,
+        "min_effect": min_effect,
+        "fail_on_score_drop": fail_on_score_drop,
+    }
+
+
 def _order_failures_first(outcomes: list[CaseOutcome]) -> list[CaseOutcome]:
     """Errors first, then other failures (lowest score first), then passes in original order."""
     def key(o: CaseOutcome) -> tuple:

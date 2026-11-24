@@ -24,7 +24,7 @@ Tests never hit real networks or API keys — use fakes in `tests/fakes.py` / in
 - [x] 15. Tests for compare significance (clear regression, noise-only change, small samples).
 - [x] 16. Core: flaky-case detection (mixed outcomes across repeats) in run summary and CLI output.
 - [x] 17. Report: CIs and flaky badges in the run and comparison HTML reports; tests.
-- [ ] 18. Wiring: `compare --alpha` / `--min-effect` so only significant regressions fail; CI regression gate uses them.
+- [x] 18. Wiring: `compare --alpha` / `--min-effect` so only significant regressions fail; CI regression gate uses them.
 - [ ] 19. Docs: README "Statistical rigor" section (why evals are noisy, how to read CIs and p-values).
 
 ## Judge calibration
