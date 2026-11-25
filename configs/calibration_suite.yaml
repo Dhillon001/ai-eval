@@ -1,0 +1,15 @@
+name: judge-calibration-v1
+description: >
+  20 store-support answers with human pass/fail labels, for checking how far the LLM judge
+  agrees with people. System outputs and judge verdicts are stored in the dataset, so it runs
+  offline: ai-eval calibrate --suite configs/calibration_suite.yaml
+  --labels datasets/examples/calibration_v1.labels.jsonl
+dataset: datasets/examples/calibration_v1.jsonl
+adapter:
+  type: mock  # replays each case's metadata.mock_output
+scorers:
+  # provider: mock replays metadata.mock_judge. To calibrate a real judge on the same outputs,
+  # switch to provider: openai or anthropic (and a model) and keep the mock adapter.
+  - type: llm_judge
+    provider: mock
+    pass_threshold: 0.7

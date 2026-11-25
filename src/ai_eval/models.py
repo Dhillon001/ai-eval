@@ -34,6 +34,9 @@ class EvalCase(BaseModel):
       (defaults to the number of ``expected_tools``).
     - ``mock_retrieved_ids`` / ``mock_tool_calls``: emitted into the trace by the ``mock``
       adapter so retrieval and agent suites run offline.
+    - ``mock_output``: a stored system output the ``mock`` adapter replays verbatim.
+    - ``mock_judge``: a stored judge verdict (``{pass, score, reason}``) replayed by an
+      ``llm_judge`` scorer with ``provider: mock``.
 
     ``human_label`` is an optional human verdict for judge calibration; it can also be supplied
     from a separate labels JSONL (see ``ai_eval.dataset.load_labels``).

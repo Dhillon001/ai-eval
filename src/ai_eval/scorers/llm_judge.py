@@ -18,13 +18,18 @@ Unsupported or contradicted claims make it unfaithful, even if they are true in 
 If the context does not contain the answer, the faithful response says so instead of guessing.
 Return JSON only: {"pass": true|false, "score": 0.0-1.0, "reason": "...", "unsupported_claims": ["..."]}"""
 
-DEFAULT_MODELS = {"openai": "gpt-4o-mini", "anthropic": "claude-haiku-5-5"}
+DEFAULT_MODELS = {"openai": "gpt-4o-mini", "anthropic": "claude-haiku-5-5", "mock": "replay"}
 
 JUDGE_SYSTEM = "You are an evaluation judge. Output JSON only."
 
 
 class LLMJudgeScorer(Scorer):
-    """LLM-as-judge. `mode: faithfulness` grades the answer against `case.context` (RAG)."""
+    """LLM-as-judge. `mode: faithfulness` grades the answer against `case.context` (RAG).
+
+    ``provider: mock`` runs offline with no client: it replays the verdict stored in the case's
+    ``metadata["mock_judge"]`` (``{"pass": bool, "score": float, "reason": str}``), or failing
+    that grades by whether every ``checks`` phrase appears in the output (case-insensitive).
+    """
 
     name = "llm_judge"
 
@@ -92,6 +97,8 @@ Criteria:
         prompt = self._build_prompt(case, run)
         if prompt is None:
             return ScoreResult(scorer=self.name, passed=True, score=1.0, details={"skipped": "no context"})
+        if self.provider == "mock":
+            return self._mock_score(case, run)
 
         key = cache_key(self.provider, self.model, prompt, system=JUDGE_SYSTEM)
         cached = self.cache.get(key) if self.cache is not None else None
@@ -146,6 +153,39 @@ Criteria:
                 "cached": cached is not None,
                 "prompt_tokens": resp.prompt_tokens,
                 "completion_tokens": resp.completion_tokens,
+            },
+        )
+
+    def _mock_score(self, case: EvalCase, run: RunResult) -> ScoreResult:
+        """Offline judge: replay a stored verdict, else grade by ``checks`` coverage."""
+        stored = case.metadata.get("mock_judge")
+        if isinstance(stored, dict):
+            parsed = dict(stored)
+        elif case.checks:
+            out = run.output.lower()
+            hits = sum(1 for c in case.checks if c.lower() in out)
+            parsed = {
+                "score": hits / len(case.checks),
+                "reason": f"mock judge: {hits}/{len(case.checks)} checks present",
+            }
+        else:
+            return self._fail("mock judge needs metadata.mock_judge or checks on the case")
+        try:
+            score = max(0.0, min(1.0, float(parsed.get("score", 0.0))))
+        except (TypeError, ValueError):
+            score = 0.0
+        passed = bool(parsed["pass"]) if "pass" in parsed else score >= self.pass_threshold
+        return ScoreResult(
+            scorer=self.name,
+            passed=passed,
+            score=score,
+            details={
+                "raw": json.dumps(parsed),
+                "parsed": parsed,
+                "judge": f"{self.provider}:{self.model}",
+                "cached": False,
+                "prompt_tokens": None,
+                "completion_tokens": None,
             },
         )
 

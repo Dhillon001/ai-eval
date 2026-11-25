@@ -13,7 +13,9 @@ class MockAdapter(SystemAdapter):
     If a case sets ``metadata["mock_retrieved_ids"]``, the ids are emitted as
     ``trace["retrieved_ids"]`` so retrieval scorers can be exercised offline.
     Likewise ``metadata["mock_tool_calls"]`` (a list of ``{name, args}``) is emitted
-    as ``trace["tool_calls"]`` for the trajectory scorer.
+    as ``trace["tool_calls"]`` for the trajectory scorer. ``metadata["mock_output"]`` (a string)
+    is replayed verbatim as the output instead of the template, so stored system outputs (e.g. a
+    judge calibration set) can be graded offline.
     """
 
     name = "mock"
@@ -22,9 +24,13 @@ class MockAdapter(SystemAdapter):
         self.template = template
 
     def run(self, case: EvalCase) -> RunResult:
-        text = self.template.replace("{input}", case.input)
-        if case.context:
-            text = f"{text}\n[context used]"
+        stored = case.metadata.get("mock_output")
+        if stored is not None:
+            text = str(stored)
+        else:
+            text = self.template.replace("{input}", case.input)
+            if case.context:
+                text = f"{text}\n[context used]"
         trace: dict[str, Any] = {"adapter": "mock"}
         retrieved = case.metadata.get("mock_retrieved_ids")
         if retrieved is not None:
