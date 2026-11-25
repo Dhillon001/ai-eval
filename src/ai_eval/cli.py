@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -13,8 +14,15 @@ from rich.table import Table
 
 from ai_eval.bench import BENCH_COLUMNS, bench_cells, format_markdown, parse_system_spec, run_bench
 from ai_eval.calibrate import CalibrationResult, calibrate_suite
+from ai_eval.dataset import load_cases, load_suite
 from ai_eval.models import RunExport
-from ai_eval.report import compare_exports, generate_report, regression_gate, write_compare_report
+from ai_eval.report import (
+    compare_exports,
+    generate_report,
+    regression_gate,
+    write_calibration_report,
+    write_compare_report,
+)
 from ai_eval.runner import run_suite
 from ai_eval.store import RunStore, load_run_file, save_run_file
 
@@ -226,6 +234,10 @@ def calibrate(
         help="Exit 1 if Cohen's kappa is below this (or undefined)",
     ),
     out: Optional[Path] = typer.Option(None, "--out", help="Also write the full result as JSON to PATH"),
+    report: Optional[Path] = typer.Option(
+        None, "--report",
+        help="Where to write the HTML calibration report (default: .ai-eval/reports/calibration-<suite>.html)",
+    ),
     no_cache: bool = typer.Option(
         False, "--no-cache", help="Bypass the judge cache in .ai-eval/cache/ (no reads or writes)"
     ),
@@ -255,6 +267,17 @@ def calibrate(
             raise typer.BadParameter(str(e)) from e
 
     _print_calibration(res)
+    if report is None:
+        slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", res.suite_name).strip("-") or "suite"
+        report_path = root / ".ai-eval" / "reports" / f"calibration-{slug}.html"
+    else:
+        report_path = report if report.is_absolute() else root / report
+    try:
+        cases = {c.id: c for c in load_cases(Path(load_suite(suite_path, project_root=root).dataset))}
+    except Exception:
+        cases = {}
+    write_calibration_report(res, report_path, cases)
+    console.print(f"Report: {report_path}")
     if out:
         dest = out if out.is_absolute() else root / out
         dest.parent.mkdir(parents=True, exist_ok=True)

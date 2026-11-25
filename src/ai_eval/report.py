@@ -4,6 +4,7 @@ import html
 import json
 from pathlib import Path
 
+from ai_eval.calibrate import CalibrationItem, CalibrationResult, ConfusionMatrix
 from ai_eval.models import CaseOutcome, EvalCase, EvalRunSummary, RunExport, ScoreResult
 from ai_eval.stats import ConfidenceInterval, compare_significance, mean_score_ci, pass_rate_ci
 from ai_eval.store import RunStore
@@ -739,6 +740,204 @@ def write_compare_report(baseline: RunExport, candidate: RunExport, out_path: Pa
   {_tag_diff_table(baseline, candidate)}
   <h2>Cases</h2>
   {_case_diff_table(rows, cases)}
+</body>
+</html>
+"""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(doc, encoding="utf-8")
+    return out_path
+
+
+# --- judge calibration report -----------------------------------------------
+
+_CALIBRATION_CSS = """\
+    .card.good { border-color: #2a2; background: #f6fff6; }
+    table.confusion { width: auto; margin-bottom: 0.5rem; }
+    table.confusion td { text-align: center; min-width: 7rem; }
+    table.confusion td .n { font-size: 1.4rem; font-weight: 600; display: block; }
+    table.confusion td .what { font-size: 0.75rem; color: #555; }
+    td.agree { background: #f0fff0; }
+    td.fp { background: #fbe0e0; }
+    td.fn { background: #fff1c2; }
+    .note { color: #555; font-size: 0.9rem; }
+    details.case.ffail { border-left-color: #d9a400; }
+"""
+
+
+def kappa_band(kappa: float | None) -> str:
+    """Landis & Koch (1977) reading of Cohen's kappa."""
+    if kappa is None:
+        return "undefined"
+    if kappa < 0:
+        return "worse than chance"
+    for upper, label in ((0.2, "slight"), (0.4, "fair"), (0.6, "moderate"), (0.8, "substantial")):
+        if kappa <= upper:
+            return label
+    return "almost perfect"
+
+
+def _opt(value: float | None, spec: str = ".3f") -> str:
+    return "n/a" if value is None else f"{value:{spec}}"
+
+
+def _calibration_cards(res: CalibrationResult) -> str:
+    cm = res.confusion
+    human_fail = cm.fp + cm.tn
+    human_pass = cm.tp + cm.fn
+    cards = [
+        ("Accuracy", _opt(res.accuracy, ".1%"), f"{cm.tp + cm.tn}/{res.n} graded cases agree", ""),
+        (
+            "Cohen's kappa",
+            _opt(res.kappa),
+            kappa_band(res.kappa) if res.kappa is not None or not res.n else "one class only",
+            "" if res.kappa is None else (" good" if res.kappa > 0.6 else (" bad" if res.kappa <= 0.4 else " warn")),
+        ),
+        (
+            "False passes",
+            str(cm.fp),
+            f"judge passed {cm.fp}/{human_fail} human fails" if human_fail else "no human fails",
+            " bad" if cm.fp else "",
+        ),
+        (
+            "False fails",
+            str(cm.fn),
+            f"judge failed {cm.fn}/{human_pass} human passes" if human_pass else "no human passes",
+            " warn" if cm.fn else "",
+        ),
+        (
+            "Score correlation",
+            _opt(res.spearman),
+            f"Spearman · Pearson {_opt(res.pearson)} · {res.score_pairs} scored"
+            if res.score_pairs
+            else "no human scores",
+            "",
+        ),
+        (
+            "Cases",
+            str(res.labeled),
+            f"labeled · {res.n} graded · {len(res.errors)} errors · {res.unlabeled} unlabeled",
+            " bad" if res.errors else "",
+        ),
+    ]
+    out = [
+        f"<div class='card{cls}'><div class='label'>{html.escape(label)}</div>"
+        f"<div class='value'>{html.escape(value)}</div><div class='sub'>{html.escape(sub)}</div></div>"
+        for label, value, sub, cls in cards
+    ]
+    return f"<section class='cards'>{''.join(out)}</section>"
+
+
+def _confusion_table(cm: ConfusionMatrix) -> str:
+    def cell(n: int, what: str, cls: str) -> str:
+        return f"<td class='{cls}'><span class='n'>{n}</span><span class='what'>{what}</span></td>"
+
+    return (
+        "<h2>Confusion matrix</h2>"
+        "<table class='confusion'><thead><tr><th></th><th>Judge pass</th><th>Judge fail</th></tr></thead>"
+        "<tbody>"
+        f"<tr><th>Human pass</th>{cell(cm.tp, 'agree', 'agree')}{cell(cm.fn, 'false fail', 'fn')}</tr>"
+        f"<tr><th>Human fail</th>{cell(cm.fp, 'false pass', 'fp')}{cell(cm.tn, 'agree', 'agree')}</tr>"
+        "</tbody></table>"
+        "<p class='note'>False passes (the judge approves an answer a person rejected) are the costly "
+        "error: they hide real failures from the eval.</p>"
+    )
+
+
+def _calibration_item(item: CalibrationItem, case: EvalCase | None, kind: str) -> str:
+    human = "pass" if item.human_passed else "fail"
+    if item.scored:
+        judge = "pass" if item.judge_passed else "fail"
+        title = f"judge {judge}, human {human}"
+    else:
+        title = f"human {human}"
+    scores = []
+    if item.judge_score is not None:
+        scores.append(f"judge {item.judge_score:.2f}")
+    if item.human_score is not None:
+        scores.append(f"human {item.human_score:.2f}")
+    score_txt = f" <span class='mean'>{html.escape(' · '.join(scores))}</span>" if scores else ""
+    body = [
+        _pre("Error", item.error),
+        _pre("Input", case.input if case else None),
+        _pre("Expected", case.expected if case else None),
+        _pre("Output", item.output),
+        _pre("Judge reason", item.reason),
+    ]
+    return (
+        f"<details class='case {kind}' open><summary><span class='status'>{html.escape(title)}</span> "
+        f"<code>{html.escape(item.case_id)}</code>{score_txt}</summary>"
+        f"<div class='body'>{''.join(body)}</div></details>"
+    )
+
+
+def _calibration_rows(items: list[CalibrationItem]) -> str:
+    rows = []
+    for i in items:
+        if not i.scored:
+            verdict, cls = "error", "fail"
+        else:
+            verdict, cls = ("agree", "pass") if i.agrees else ("disagree", "fail")
+        rows.append(
+            f"<tr class='{cls}'><td><code>{html.escape(i.case_id)}</code></td>"
+            f"<td>{'pass' if i.human_passed else 'fail'}</td>"
+            f"<td>{'-' if i.judge_passed is None else ('pass' if i.judge_passed else 'fail')}</td>"
+            f"<td>{_opt(i.human_score, '.2f')}</td><td>{_opt(i.judge_score, '.2f')}</td>"
+            f"<td>{verdict}</td></tr>"
+        )
+    return (
+        "<details><summary>All labeled cases</summary><table class='diff'><thead><tr><th>Case</th>"
+        "<th>Human</th><th>Judge</th><th>Human score</th><th>Judge score</th><th>Verdict</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table></details>"
+    )
+
+
+def write_calibration_report(
+    res: CalibrationResult,
+    out_path: Path,
+    cases: dict[str, EvalCase] | None = None,
+) -> Path:
+    """HTML report of judge-vs-human agreement: summary cards, confusion matrix, the cases where
+    the judge disagreed with people (false passes first), judge errors, and every labeled case.
+
+    ``cases`` (by id) adds each case's input and expected answer to the disagreement list.
+    """
+    cases = cases or {}
+    disagreements = sorted(res.disagreements, key=lambda i: (i.human_passed, i.case_id))  # false passes first
+    if disagreements:
+        dis_html = "".join(
+            _calibration_item(i, cases.get(i.case_id), "fail" if i.judge_passed else "ffail")
+            for i in disagreements
+        )
+        dis_intro = f"<p>{len(disagreements)} case(s); false passes listed first.</p>"
+    else:
+        dis_html = ""
+        dis_intro = "<p>None — the judge agreed with every graded human label.</p>" if res.n else "<p>No graded cases.</p>"
+    err_html = ""
+    if res.errors:
+        err_html = (
+            f"<h2>Judge errors</h2><p>{len(res.errors)} case(s) excluded from the metrics.</p>"
+            + "".join(_calibration_item(i, cases.get(i.case_id), "error") for i in res.errors)
+        )
+
+    doc = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Calibration {html.escape(res.suite_name)}</title>
+  <style>
+{_BASE_CSS}{_CALIBRATION_CSS}  </style>
+</head>
+<body>
+  <h1>Judge calibration</h1>
+  <p>Suite: {html.escape(res.suite_name)} | Judge: {html.escape(res.judge)}</p>
+  {_calibration_cards(res)}
+  {_confusion_table(res.confusion)}
+  <h2>Disagreements</h2>
+  {dis_intro}
+  {dis_html}
+  {err_html}
+  <h2>Cases</h2>
+  {_calibration_rows(res.items)}
 </body>
 </html>
 """
