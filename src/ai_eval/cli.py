@@ -12,6 +12,7 @@ from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn
 from rich.table import Table
 
 from ai_eval.bench import BENCH_COLUMNS, bench_cells, format_markdown, parse_system_spec, run_bench
+from ai_eval.calibrate import CalibrationResult, calibrate_suite
 from ai_eval.models import RunExport
 from ai_eval.report import compare_exports, generate_report, regression_gate, write_compare_report
 from ai_eval.runner import run_suite
@@ -169,6 +170,101 @@ def bench(
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(md, encoding="utf-8")
         console.print(f"Wrote {dest}")
+
+
+def _fmt(value: Optional[float], spec: str = ".3f") -> str:
+    return "n/a" if value is None else f"{value:{spec}}"
+
+
+def _print_calibration(res: CalibrationResult) -> None:
+    console.print(f"[bold]Judge calibration[/bold]: {escape(res.suite_name)} | judge {escape(res.judge)}")
+    console.print(
+        f"Labeled cases: {res.labeled} (graded {res.n}, judge errors/skips {len(res.errors)}) | "
+        f"unlabeled skipped: {res.unlabeled}"
+    )
+    console.print(
+        f"Accuracy: {_fmt(res.accuracy, '.1%')} | Cohen's kappa: {_fmt(res.kappa)}"
+        + ("" if res.kappa is not None or not res.n else " (one class only)")
+    )
+    cm = res.confusion
+    table = Table(title="Confusion matrix (rows: human, cols: judge)")
+    table.add_column("")
+    table.add_column("judge pass", justify="right")
+    table.add_column("judge fail", justify="right")
+    table.add_row("human pass", str(cm.tp), str(cm.fn))
+    table.add_row("human fail", str(cm.fp), str(cm.tn))
+    console.print(table)
+    if res.score_pairs:
+        console.print(
+            f"Score correlation ({res.score_pairs} cases with human scores): "
+            f"Pearson {_fmt(res.pearson)} | Spearman {_fmt(res.spearman)}"
+        )
+    else:
+        console.print("Score correlation: n/a (no human scores)")
+    for item in res.disagreements:
+        verdict = "passed" if item.judge_passed else "failed"
+        human = "pass" if item.human_passed else "fail"
+        console.print(f"  [yellow]disagree[/yellow] {escape(item.case_id)}: judge {verdict}, human {human}")
+    for item in res.errors:
+        console.print(f"  [red]error[/red] {escape(item.case_id)}: {escape(item.error or '')}")
+
+
+@app.command()
+def calibrate(
+    suite: Path = typer.Option(..., "--suite", help="Path to suite YAML (must have an LLM judge scorer)"),
+    labels: Optional[Path] = typer.Option(
+        None, "--labels", help="Human labels JSONL keyed by case id (else inline human_label fields)"
+    ),
+    judge: Optional[str] = typer.Option(
+        None, "--judge", help="Name/type of the judge scorer to calibrate (default: first LLM judge)"
+    ),
+    adapter: Optional[str] = typer.Option(None, "--adapter", help="Override adapter: mock, openai, anthropic, http, mcp"),
+    model: Optional[str] = typer.Option(None, "--model", help="Model name for the openai/anthropic/mcp adapter"),
+    concurrency: int = typer.Option(1, "--concurrency", "-j", min=1, help="Cases to run in parallel"),
+    min_kappa: Optional[float] = typer.Option(
+        None, "--min-kappa", min=-1.0, max=1.0,
+        help="Exit 1 if Cohen's kappa is below this (or undefined)",
+    ),
+    out: Optional[Path] = typer.Option(None, "--out", help="Also write the full result as JSON to PATH"),
+    no_cache: bool = typer.Option(
+        False, "--no-cache", help="Bypass the judge cache in .ai-eval/cache/ (no reads or writes)"
+    ),
+):
+    """Measure how well the suite's LLM judge agrees with human labels."""
+    root = _project_root()
+    suite_path = suite if suite.is_absolute() else root / suite
+    labels_path = None if labels is None else (labels if labels.is_absolute() else root / labels)
+    with Progress(
+        SpinnerColumn(), TextColumn("{task.description}"), BarColumn(), MofNCompleteColumn(),
+        console=console, transient=True,
+    ) as progress:
+        task = progress.add_task("Calibrating", total=None)
+        try:
+            res = calibrate_suite(
+                suite_path=suite_path,
+                project_root=root,
+                labels_path=labels_path,
+                adapter_name=adapter,
+                adapter_options={"model": model} if model else None,
+                judge_name=judge,
+                concurrency=concurrency,
+                use_cache=not no_cache,
+                on_case_done=lambda _i: progress.advance(task),
+            )
+        except ValueError as e:
+            raise typer.BadParameter(str(e)) from e
+
+    _print_calibration(res)
+    if out:
+        dest = out if out.is_absolute() else root / out
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        payload = res.model_dump(mode="json")
+        payload["disagreements"] = [i.case_id for i in res.disagreements]
+        dest.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        console.print(f"Wrote {dest}")
+    if min_kappa is not None and (res.kappa is None or res.kappa < min_kappa):
+        console.print(f"[red]Cohen's kappa {_fmt(res.kappa)} below min {min_kappa:.3f}[/red]")
+        raise typer.Exit(code=1)
 
 
 @app.command("list-runs")

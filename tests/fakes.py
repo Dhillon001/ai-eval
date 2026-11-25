@@ -43,6 +43,23 @@ class FakeOpenAI:
         )
 
 
+
+class FakeOpenAIByPrompt(FakeOpenAI):
+    """Answers each call with ``responder(user_prompt)``, e.g. a judge whose verdict depends
+    on the graded output. A responder that raises makes that call fail."""
+
+    def __init__(self, responder):
+        super().__init__()
+        self._responder = responder
+
+    def _create(self, **kw):
+        self.calls.append(kw)
+        text = self._responder(kw["messages"][-1]["content"])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=text))],
+            usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5),
+        )
+
 class FakeAnthropic:
     """``errors``: exceptions raised by the first calls, in order, before answering normally."""
 

@@ -29,7 +29,7 @@ Tests never hit real networks or API keys — use fakes in `tests/fakes.py` / in
 
 ## Judge calibration
 - [x] 20. Core: human label support — `human_label` (pass + optional score) on cases or a separate labels JSONL keyed by case id; loader + validation.
-- [ ] 21. Core: `ai-eval calibrate --suite S --labels L` — run the judge and compute accuracy, Cohen's kappa, confusion matrix and score correlation vs. humans.
+- [x] 21. Core: `ai-eval calibrate --suite S --labels L` — run the judge and compute accuracy, Cohen's kappa, confusion matrix and score correlation vs. humans.
 - [ ] 22. Tests for calibration metrics (perfect, chance-level, skewed classes, missing labels).
 - [ ] 23. Data: 20-case labeled calibration set + `configs/calibration_suite.yaml` (mock outputs stored so it runs offline).
 - [ ] 24. Report: HTML calibration report (agreement summary, confusion matrix, disagreement list).
