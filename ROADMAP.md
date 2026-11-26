@@ -34,7 +34,7 @@ Tests never hit real networks or API keys — use fakes in `tests/fakes.py` / in
 - [x] 23. Data: 20-case labeled calibration set + `configs/calibration_suite.yaml` (mock outputs stored so it runs offline).
 - [x] 24. Report: HTML calibration report (agreement summary, confusion matrix, disagreement list).
 - [x] 25. Tests for the calibration report and CLI (`--min-kappa` exit codes).
-- [ ] 26. Docs: README "Can you trust the judge?" section.
+- [x] 26. Docs: README "Can you trust the judge?" section.
 
 ## Multi-turn conversations
 - [ ] 27. Core: `EvalCase.messages` (prior conversation turns) with validation; single-turn cases unchanged.

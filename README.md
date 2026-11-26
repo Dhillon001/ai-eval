@@ -306,6 +306,78 @@ Waived regressions are not hidden: the JSON output's `gate` block lists what fai
 
 ---
 
+## ⚖️ Can you trust the judge?
+
+An `llm_judge` scorer is a model grading a model. Every pass rate it produces is only as good as the judge's taste, and judges have well-known blind spots: they reward confident, fluent, friendly answers, they penalize short ones, and they miss factual errors they can't check against the criteria. Before a judge gates your CI, **measure how often it agrees with a person**.
+
+### 1. Label a sample by hand
+
+Pick 20–50 cases that look like real traffic (include some you expect to fail), look at the system's answers, and write down your own verdict. Labels live in a JSONL file keyed by case id:
+
+```jsonl
+{"id": "return-window", "pass": true, "score": 1.0, "notes": "Correct and complete."}
+{"id": "ship-express", "pass": false, "score": 0.2, "notes": "Wrong: express is 1-2 days and $15."}
+```
+
+`pass` is required; `score` (0–1) is optional and only used for correlation; `notes` is for you. You can also put a `human_label` object straight on a case in the dataset — a labels file overrides it, and a label whose id matches no case is an error, so typos and stale files don't silently shrink the sample.
+
+### 2. Run `calibrate`
+
+`calibrate` runs the system on every labeled case, grades each answer with the suite's judge, and compares the two. The repo ships a 20-case store-support set with stored outputs and judge verdicts, so this runs offline:
+
+```bash
+ai-eval calibrate --suite configs/calibration_suite.yaml \
+  --labels datasets/examples/calibration_v1.labels.jsonl
+# Labeled cases: 20 (graded 20, judge errors/skips 0) | unlabeled skipped: 0
+# Accuracy: 80.0% | Cohen's kappa: 0.565
+#              judge pass   judge fail
+# human pass           11            1
+# human fail            3            5
+# Score correlation (20 cases with human scores): Pearson 0.817 | Spearman 0.908
+#   disagree exchange-size: judge failed, human pass
+#   disagree ship-express: judge passed, human fail
+#   disagree international-returns: judge passed, human fail
+#   disagree warranty-water: judge passed, human fail
+```
+
+It also writes an HTML report (`.ai-eval/reports/calibration-<suite>.html`, or `--report PATH`) with the summary, the confusion matrix and every disagreement side by side with the answer, the judge's reason and your notes. `--out PATH` saves the full result as JSON. Unlabeled cases are skipped and counted; cases where the judge errored are listed but kept out of the metrics.
+
+### 3. Read the numbers
+
+| number | what it tells you |
+|---|---|
+| **accuracy** | share of cases where judge and human agree on pass/fail. Easy to read, easy to fool: if 60% of your cases pass, a judge that passes *everything* scores 60%. |
+| **Cohen's kappa** | agreement **after removing what chance alone would give**. 1 = perfect, 0 = no better than guessing with the right pass rate, below 0 = worse than guessing. This is the headline number. |
+| **confusion matrix** | *where* they disagree. **Judge pass / human fail** (false pass) is the dangerous cell: those are bad answers your eval will wave through. Judge fail / human pass only costs you noise. |
+| **Pearson / Spearman** | whether judge *scores* track human scores, using the cases where you gave one. Spearman only cares about ranking, so a judge that is harsh but orders answers correctly still scores well. |
+
+Rough guide for kappa (Landis & Koch):
+
+| kappa | agreement | use the judge for… |
+|---|---|---|
+| ≥ 0.8 | almost perfect | gating CI |
+| 0.6 – 0.8 | substantial | gating CI, with spot checks |
+| 0.4 – 0.6 | moderate | trends and triage, not as a hard gate |
+| < 0.4 | fair or worse | nothing yet — fix the criteria first |
+
+In the example, 80% accuracy sounds fine, but kappa is 0.565 and 3 of the 4 disagreements are false passes — the judge approved express shipping at the wrong price, free international returns that don't exist, and warranty cover for water damage, because each answer was confident and polite. That is the classic failure: the judge grades tone, not facts. With so few labels the numbers are themselves noisy (see [Statistical rigor](#-statistical-rigor)), so treat a kappa of 0.55 vs. 0.62 on 20 cases as the same; 50+ labels give you a much steadier read.
+
+### 4. Fix the judge, then gate on it
+
+The disagreement list is your to-do list. Usually the fix is in `judge_criteria`, not the model: spell out the facts that must be right ("must say 1-2 business days and $15"), say explicitly that tone does not compensate for a wrong fact, and say when a short answer is fine. Re-run `calibrate` after every change — same labels, same outputs — until kappa is where you want it. To try a different judge model on the same answers, keep the `mock` adapter and change the scorer's `provider`/`model`.
+
+Then keep it honest: `--min-kappa` exits 1 when agreement drops below a threshold (or is undefined — e.g. judge and humans both passed every case, so there is nothing to measure), so a criteria edit or a judge-model upgrade that quietly breaks the judge fails CI:
+
+```bash
+ai-eval calibrate --suite configs/calibration_suite.yaml \
+  --labels datasets/examples/calibration_v1.labels.jsonl --min-kappa 0.6
+# Cohen's kappa 0.565 below min 0.600   (exit 1)
+```
+
+> **Rule of thumb:** never let a judge gate merges until you've seen its false passes with your own eyes. Twenty labels take half an hour and tell you more than any judge prompt tweak.
+
+---
+
 ## 📚 More
 
 Adapters, cost tracking, retries, the judge cache, benchmarks and every command are in the **[full reference](docs/REFERENCE.md)**.
