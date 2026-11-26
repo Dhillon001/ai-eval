@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 
 class HumanLabel(BaseModel):
@@ -18,6 +18,50 @@ class HumanLabel(BaseModel):
     passed: bool = Field(validation_alias=AliasChoices("passed", "pass"))
     score: float | None = Field(default=None, ge=0.0, le=1.0)
     notes: str | None = None
+
+
+class Message(BaseModel):
+    """One prior turn of a conversation (``EvalCase.messages``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["system", "user", "assistant"]
+    content: str = Field(min_length=1)
+
+    @field_validator("content")
+    @classmethod
+    def _content_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("message content must not be blank")
+        return v
+
+
+def validate_conversation(messages: list[Message]) -> None:
+    """Check that ``messages`` is a well-formed history preceding a new user turn.
+
+    System messages may only appear at the start. The remaining turns must alternate
+    ``user``/``assistant``, starting with ``user`` and ending with ``assistant`` (the case's
+    ``input`` is the next user turn). Raises ``ValueError`` on the first problem found.
+    """
+    i = 0
+    while i < len(messages) and messages[i].role == "system":
+        i += 1
+    turns = messages[i:]
+    for j, msg in enumerate(turns):
+        if msg.role == "system":
+            raise ValueError(
+                f"messages[{i + j}]: system messages are only allowed at the start"
+            )
+        expected = "user" if j % 2 == 0 else "assistant"
+        if msg.role != expected:
+            raise ValueError(
+                f"messages[{i + j}]: expected role {expected!r}, got {msg.role!r} "
+                "(turns must alternate user/assistant, starting with user)"
+            )
+    if turns and turns[-1].role != "assistant":
+        raise ValueError(
+            "messages must end with an assistant turn; the case 'input' is the next user turn"
+        )
 
 
 class EvalCase(BaseModel):
@@ -40,6 +84,11 @@ class EvalCase(BaseModel):
 
     ``human_label`` is an optional human verdict for judge calibration; it can also be supplied
     from a separate labels JSONL (see ``ai_eval.dataset.load_labels``).
+
+    ``messages`` holds prior conversation turns (``{role, content}`` with role ``system``,
+    ``user`` or ``assistant``) for multi-turn cases; ``input`` is the next user turn. Leading
+    system messages are allowed, then turns alternate user/assistant and end with assistant.
+    Empty (the default) means a single-turn case.
     """
 
     id: str
@@ -49,6 +98,21 @@ class EvalCase(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     checks: list[str] = Field(default_factory=list)
     human_label: HumanLabel | None = None
+    messages: list[Message] = Field(default_factory=list)
+
+    @field_validator("messages")
+    @classmethod
+    def _valid_conversation(cls, v: list[Message]) -> list[Message]:
+        validate_conversation(v)
+        return v
+
+    @property
+    def is_multi_turn(self) -> bool:
+        return bool(self.messages)
+
+    def conversation(self) -> list[Message]:
+        """The full conversation to send: prior ``messages`` followed by ``input`` as a user turn."""
+        return [*self.messages, Message.model_construct(role="user", content=self.input)]
 
 
 class RunResult(BaseModel):

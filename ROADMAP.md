@@ -37,7 +37,7 @@ Tests never hit real networks or API keys — use fakes in `tests/fakes.py` / in
 - [x] 26. Docs: README "Can you trust the judge?" section.
 
 ## Multi-turn conversations
-- [ ] 27. Core: `EvalCase.messages` (prior conversation turns) with validation; single-turn cases unchanged.
+- [x] 27. Core: `EvalCase.messages` (prior conversation turns) with validation; single-turn cases unchanged.
 - [ ] 28. Core: openai, anthropic, http and mock adapters send conversation history.
 - [ ] 29. Tests for multi-turn adapters and backward compatibility.
 - [ ] 30. Core: conversation-aware scoring — judge sees the full conversation; `conversation` judge mode for whole-dialogue criteria.
