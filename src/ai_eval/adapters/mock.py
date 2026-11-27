@@ -7,6 +7,10 @@ from ai_eval.adapters.base import SystemAdapter
 from ai_eval.models import EvalCase, RunResult
 
 
+def render_history(case: EvalCase) -> str:
+    return "\n".join(f"{m.role}: {m.content}" for m in case.messages)
+
+
 class MockAdapter(SystemAdapter):
     """Deterministic adapter for CI and local dev without API keys.
 
@@ -16,6 +20,9 @@ class MockAdapter(SystemAdapter):
     as ``trace["tool_calls"]`` for the trajectory scorer. ``metadata["mock_output"]`` (a string)
     is replayed verbatim as the output instead of the template, so stored system outputs (e.g. a
     judge calibration set) can be graded offline.
+
+    Multi-turn cases echo their prior ``messages`` as ``trace["messages"]``, and the template may
+    use ``{history}`` (prior turns rendered one per line as ``role: content``).
     """
 
     name = "mock"
@@ -28,10 +35,12 @@ class MockAdapter(SystemAdapter):
         if stored is not None:
             text = str(stored)
         else:
-            text = self.template.replace("{input}", case.input)
+            text = self.template.replace("{history}", render_history(case)).replace("{input}", case.input)
             if case.context:
                 text = f"{text}\n[context used]"
         trace: dict[str, Any] = {"adapter": "mock"}
+        if case.messages:
+            trace["messages"] = [m.model_dump() for m in case.messages]
         retrieved = case.metadata.get("mock_retrieved_ids")
         if retrieved is not None:
             trace["retrieved_ids"] = list(retrieved) if isinstance(retrieved, (list, tuple)) else retrieved

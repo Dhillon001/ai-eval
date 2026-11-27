@@ -8,8 +8,19 @@ from ai_eval.llm import DEFAULT_MAX_RETRIES, LLMError, build_user_prompt, chat, 
 from ai_eval.models import EvalCase, RunResult
 
 
+def split_history(case: EvalCase) -> tuple[list[str], list[dict[str, str]]]:
+    """Split a case's prior ``messages`` into system texts and ``user``/``assistant`` turns."""
+    systems = [m.content for m in case.messages if m.role == "system"]
+    turns = [{"role": m.role, "content": m.content} for m in case.messages if m.role != "system"]
+    return systems, turns
+
+
 class ChatAdapter(SystemAdapter):
-    """Single-turn chat adapter for any supported provider (openai, anthropic)."""
+    """Chat adapter for any supported provider (openai, anthropic).
+
+    Multi-turn cases send their prior ``messages`` as conversation history before the case
+    input; leading system messages from the case are appended to the adapter's system prompt.
+    """
 
     provider = "openai"
     default_model = "gpt-4o-mini"
@@ -50,17 +61,20 @@ class ChatAdapter(SystemAdapter):
             return RunResult(case_id=case.id, output="", error=str(e))
 
         user = build_user_prompt(case.input, case.context)
+        case_systems, history = split_history(case)
+        system = "\n\n".join([self.system_prompt, *case_systems])
         start = time.perf_counter()
         try:
             resp = chat(
                 client,
                 self.provider,
                 self.model,
-                self.system_prompt,
+                system,
                 user,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 max_retries=self.max_retries,
+                history=history or None,
             )
         except Exception as e:
             return RunResult(
@@ -69,16 +83,19 @@ class ChatAdapter(SystemAdapter):
                 latency_ms=(time.perf_counter() - start) * 1000,
                 error=f"{type(e).__name__}: {e}",
             )
+        trace: dict[str, Any] = {
+            "provider": self.provider,
+            "model": self.model,
+            "system": system,
+            "user": user,
+            "retries": resp.retries,
+        }
+        if history:
+            trace["history"] = history
         return RunResult(
             case_id=case.id,
             output=resp.text,
-            trace={
-                "provider": self.provider,
-                "model": self.model,
-                "system": self.system_prompt,
-                "user": user,
-                "retries": resp.retries,
-            },
+            trace=trace,
             latency_ms=(time.perf_counter() - start) * 1000,
             prompt_tokens=resp.prompt_tokens,
             completion_tokens=resp.completion_tokens,

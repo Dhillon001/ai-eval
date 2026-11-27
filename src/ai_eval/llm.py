@@ -141,11 +141,20 @@ def chat(
     max_retries: int = DEFAULT_MAX_RETRIES,
     retry_base_delay: float = DEFAULT_RETRY_BASE_DELAY,
     sleep: Callable[[float], None] = time.sleep,
+    history: list[dict[str, str]] | None = None,
 ) -> ChatResponse:
     """One chat completion. Transient failures (429/5xx/timeouts) are retried up to `max_retries`
-    times with exponential backoff and jitter; `max_retries=0` disables retrying."""
+    times with exponential backoff and jitter; `max_retries=0` disables retrying.
+
+    ``history`` is an optional list of prior ``{role, content}`` turns (``user``/``assistant``)
+    sent between the system prompt and the final ``user`` message.
+    """
     if provider not in PROVIDERS:
         raise LLMError(f"Unknown provider: {provider}. Use one of {PROVIDERS}.")
+    prior = [{"role": m["role"], "content": m["content"]} for m in (history or [])]
+    for m in prior:
+        if m["role"] not in ("user", "assistant"):
+            raise LLMError(f"history roles must be 'user' or 'assistant', got {m['role']!r}")
 
     def retrying(create: Callable[..., Any], **kwargs: Any) -> tuple[Any, int]:
         return call_with_retries(
@@ -156,7 +165,7 @@ def chat(
         resp, retries = retrying(
             client.chat.completions.create,
             model=model,
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            messages=[{"role": "system", "content": system}, *prior, {"role": "user", "content": user}],
             temperature=temperature,
         )
         usage = getattr(resp, "usage", None)
@@ -171,7 +180,7 @@ def chat(
             client.messages.create,
             model=model,
             system=system,
-            messages=[{"role": "user", "content": user}],
+            messages=[*prior, {"role": "user", "content": user}],
             temperature=temperature,
             max_tokens=max_tokens,
         )

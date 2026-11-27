@@ -37,25 +37,41 @@ def interpolate_env(value: str, env: dict[str, str] | None = None) -> str:
     return _ENV_VAR.sub(_sub, value)
 
 
-def render_template(template: Any, case: EvalCase) -> Any:
-    """Fill ``{input}``/``{context}`` placeholders in a JSON-like template.
+def _placeholder_values(case: EvalCase) -> dict[str, Any]:
+    return {
+        "{input}": case.input,
+        "{context}": case.context,
+        "{messages}": [m.model_dump() for m in case.messages],
+        "{conversation}": [m.model_dump() for m in case.conversation()],
+    }
 
-    A string that is exactly a placeholder is replaced by the raw value (so ``"{context}"`` becomes
-    ``null`` when the case has no context); placeholders embedded in longer strings are substituted
-    as text (missing context becomes an empty string). Dicts and lists are rendered recursively.
+
+def render_template(template: Any, case: EvalCase) -> Any:
+    """Fill placeholders in a JSON-like template.
+
+    Placeholders: ``{input}``, ``{context}``, ``{messages}`` (the case's prior conversation turns as
+    a list of ``{role, content}``) and ``{conversation}`` (prior turns plus ``input`` as the final
+    user turn). A string that is exactly a placeholder is replaced by the raw value (so
+    ``"{context}"`` becomes ``null`` when the case has no context and ``"{messages}"`` a JSON
+    list); placeholders embedded in longer strings are substituted as text (missing context becomes
+    an empty string, message lists become JSON). Dicts and lists are rendered recursively.
     """
-    values = {"{input}": case.input, "{context}": case.context}
+    return _render(template, _placeholder_values(case))
+
+
+def _render(template: Any, values: dict[str, Any]) -> Any:
     if isinstance(template, str):
         if template in values:
             return values[template]
         out = template
         for key, val in values.items():
-            out = out.replace(key, val if val is not None else "")
+            if key in out:
+                out = out.replace(key, _as_text(val))
         return out
     if isinstance(template, dict):
-        return {k: render_template(v, case) for k, v in template.items()}
+        return {k: _render(v, values) for k, v in template.items()}
     if isinstance(template, list):
-        return [render_template(v, case) for v in template]
+        return [_render(v, values) for v in template]
     return template
 
 
@@ -119,7 +135,9 @@ def _as_text(value: Any) -> str:
 class HTTPAdapter(SystemAdapter):
     """Evaluate any service that answers a JSON POST.
 
-    The request body is built from ``body_template`` with ``{input}``/``{context}`` placeholders,
+    The request body is built from ``body_template`` with ``{input}``/``{context}`` (and, for
+    multi-turn cases, ``{messages}``/``{conversation}``) placeholders; the default template adds
+    ``"messages"`` only when a case has prior turns,
     header values may reference environment variables as ``${API_TOKEN}``, and the system output
     is read from the JSON response at the dotted ``response_path``. ``trace_path`` optionally copies
     extra response fields (e.g. ``retrieved_ids``, ``tool_calls``) into ``RunResult.trace`` so
@@ -163,7 +181,11 @@ class HTTPAdapter(SystemAdapter):
         return {k: interpolate_env(str(v)) for k, v in self.headers.items()}
 
     def build_request_body(self, case: EvalCase) -> Any:
-        return render_template(self.body_template, case)
+        template = self.body_template
+        if template is DEFAULT_BODY_TEMPLATE and case.messages:
+            # Single-turn bodies stay exactly as before; multi-turn cases also send their history.
+            template = {**DEFAULT_BODY_TEMPLATE, "messages": "{messages}"}
+        return render_template(template, case)
 
     def run(self, case: EvalCase) -> RunResult:
         trace: dict[str, Any] = {"adapter": "http", "url": self.url, "method": self.method}
